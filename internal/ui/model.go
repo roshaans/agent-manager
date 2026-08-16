@@ -52,6 +52,10 @@ const (
 	// modeRunInit offers to give a project its first settings file, on a p
 	// pressed in a repository that has none.
 	modeRunInit
+	// modeRulesPick lists the instruction files the row under the cursor is
+	// governed by, and modeRulesView shows one of them.
+	modeRulesPick
+	modeRulesView
 )
 
 type treeRow struct {
@@ -174,6 +178,7 @@ type Model struct {
 	repoPick   repoPickState
 	runPick    runPickState
 	runInit    runInitState
+	rules      rulesState
 	// editorReturnID is the session an editor request detached from, so the
 	// attach it cost can be resumed once the editor is up.
 	editorReturnID string

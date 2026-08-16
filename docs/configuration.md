@@ -43,6 +43,19 @@ A `fork_command` references its source through `{id}` or `{session_file}`, so on
 
 State is stored next to the config in `state.db` (SQLite).
 
+## Rules files
+
+`rules_files` names the instruction files a tool reads before its first turn — the ones `i` lists and opens (see [Agent rules](usage.md#agent-rules)). It is unrelated to the `rules` above, which classify pane output; these are what the agent is *told*.
+
+```toml
+[tools.mytool]
+rules_files = ["MYTOOL.md", "AGENTS.md", "~/.config/mytool/AGENTS.md"]
+```
+
+A bare or relative name is a project file, looked for in the session's directory and every directory up to the repository root. A name starting with `~` or `/` is the single copy the tool keeps per machine. A name that would climb above the checkout is ignored, so a spec cannot reach into a shared parent directory. A tool block that lists none is looked up under `AGENTS.md`.
+
+The shipped defaults are `CLAUDE.md`, `CLAUDE.local.md` and `~/.claude/CLAUDE.md` for Claude Code; `AGENTS.md` plus `~/.codex/AGENTS.md` for Codex and `~/.config/opencode/AGENTS.md` for OpenCode; `GEMINI.md` and `~/.gemini/GEMINI.md` for Gemini CLI; `AGENTS.md` for Grok, Pi and Hermes. Change the list if your CLI reads somewhere else — nothing else in Agent Manager depends on these names.
+
 ## Right-to-left text
 
 A row carrying Hebrew or Arabic can flip a terminal's paragraph direction, and the whole row is then right-justified into the sessions rail. Agent Manager pins such rows left with Unicode direction marks on the hosts that need them, iTerm2 today, detected through `TERM_PROGRAM` and `LC_TERMINAL`.

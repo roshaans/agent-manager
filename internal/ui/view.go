@@ -38,6 +38,10 @@ func (m *Model) View() string {
 		frame = m.viewRunPick()
 	case modeRunInit:
 		frame = m.viewRunInit()
+	case modeRulesPick:
+		frame = m.viewRulesPick()
+	case modeRulesView:
+		frame = m.viewRulesView()
 	case modeGroupForm:
 		frame = m.viewGroupForm()
 	case modeDiff:
@@ -485,7 +489,8 @@ func (m *Model) rowLegend() legendSection {
 			foldAction = "unfold"
 		}
 		return legendSection{title: "Group", pairs: [][2]string{
-			{"↵", foldAction}, {"o", "editor"}, {"G", "lazygit"}, {"r", "rename"}, {"m", "move"},
+			{"↵", foldAction}, {"o", "editor"}, {"i", "rules"}, {"G", "lazygit"},
+			{"r", "rename"}, {"m", "move"},
 			{"x/X", "kill / all"}, {"v/V", "revive / all"},
 			{"a/u", "archive / restore"}, {"d", "delete"},
 		}}
@@ -505,7 +510,7 @@ func (m *Model) rowLegend() legendSection {
 	// o and G sit outside the conversation keys: a shell's directory is worth
 	// opening, and its repository worth reading, as much as an agent's.
 	pairs = append(pairs, [][2]string{
-		{"o", "editor"}, {"G", "lazygit"}, {"r", "rename"}, {"m", "move"},
+		{"o", "editor"}, {"i", "rules"}, {"G", "lazygit"}, {"r", "rename"}, {"m", "move"},
 		{"x/X", "kill / all"}, {"v/V", "revive / all"}, {"R", "restart"},
 		{"a/u", "archive / restore"}, {"d", "delete"},
 	}...)

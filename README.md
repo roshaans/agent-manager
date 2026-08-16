@@ -29,6 +29,8 @@ Instead of hunting through terminal tabs to see which agent is done and which is
 
 Press `f` on a session to continue its conversation in a separate named fork.
 
+`i` opens the rules a session actually runs under — the `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` its own tool reads, project and global — to read in place or edit, so what an agent was told before its first turn is one key away rather than a file you have to remember the name of.
+
 The tools you use alongside agents live in the same list: `T` opens a plain shell tab in the selected group for builds, Git, and one-off commands.
 
 Not here yet: cost tracking, mouse-driven navigation, and agents that can talk to each other.
@@ -81,6 +83,7 @@ The full reference, every key, the quick prompt, killing and reviving, diff revi
 | `→` / `←` | Step in and out: `→` focuses the session or opens the group, `←` closes the group and, at the start of a focused agent's prompt, comes back to the list. In beta, and Settings can turn the pair off |
 | `ctrl+r` | Review the session's changes as full-file diffs; `c` comments a line, `C` sends the comments to the agent |
 | `G` | Hand the terminal to lazygit on the row's repository — a worktree session opens on its own branch — and take it back when it quits |
+| `i` | The rules the session runs under: the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` its tool reads, to read in place or open in your editor |
 | `x` / `v` | Kill a session to free its RAM / revive it on its own conversation |
 | `R` | Restart a session on an empty context: same name, group, directory and tool, fresh conversation |
 | `s` | Settings (default tool, theme or follow the OS light/dark mode, list density, review layout, desktop notifications) |

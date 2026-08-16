@@ -19,6 +19,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `O` | Show what this worktree is running: its server in a browser, or a TUI run session's pane |
 | `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
 | `Y` | Copy the selected row's directory to the clipboard: a session's checkout — its worktree, when it has one — or a group's default path |
+| `i` | The rules the selected session runs under: the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` its tool reads, read in place or opened in your editor ([Agent rules](#agent-rules)) |
 | `f` | Fork the selected conversation into a named session in the same group and directory |
 | `g` | New group (name, parent, default path) |
 | `enter` | Focus session in place (keys go to the agent, list stays) / fold group |
@@ -106,6 +107,26 @@ A known windowed editor (the six above, plus `open` and `xdg-open`) starts detac
 It is the other half of `ctrl+r`. The [review](#diff-review) reads what an agent changed and sends comments back to it; lazygit is where you stage, commit, switch branches, stash and read the log. Neither replaces the other, so they keep separate keys.
 
 lazygit has to be on `PATH` — nothing is configurable here, and the status line says so when it is missing. A row whose directory is not inside a git repository says that instead of handing the screen to a program that would exit on its own error.
+## Agent rules
+
+Every CLI reads an instruction file before its first turn — `CLAUDE.md` for Claude Code, `AGENTS.md` for Codex, OpenCode, Grok, Pi and Hermes, `GEMINI.md` for Gemini CLI — and which one it reads is a property of the tool, not of the directory. `i` on a session shows the files *that* session is actually governed by, so you can read what an agent was told before you ask why it did something.
+
+```
+▤ Rules · claude
+❯ CLAUDE.md            project · 1.4KB · 3d ago
+  CLAUDE.local.md      project · not created
+  ~/.claude/CLAUDE.md  global · 6.2KB · 2h ago
+```
+
+- `↑↓` picks a file, `↵` reads it in place — scroll with `↑↓`/`jk`, `pgup`/`pgdn`, `g`/`G` — and `esc` goes back to the list rather than out of the surface, because reading one rules file and then its neighbour is the normal way round.
+- `e` opens the file in [your editor](#opening-the-editor).
+- A file that has not been written yet is listed too, marked `not created`: "this project tells the agent nothing" is an answer, and `↵` on that row creates it and opens it. It is created **empty** — anything Agent Manager put in it would become a rule the agent then obeys.
+
+Project files are looked for in the session's live directory and every directory up to the repository root, nearest first, which is the chain the agents themselves read: a session started in `packages/api` shows that package's rules and the repository's. The walk stops at the repository, for the same reason [project settings](project-settings.md) discovery does. When nothing along the chain exists, the repository root is offered as where the file would go.
+
+A group row, or a [terminal tab](#terminal-tabs), names no tool to resolve against, so it lists every instruction file that actually exists there for any configured CLI instead of offering to create one.
+
+Which files each tool reads is [configurable](configuration.md#rules-files) per tool block, so a CLI that reads somewhere else is one line away from being listed correctly.
 
 ## Worktree sessions
 

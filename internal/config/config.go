@@ -62,6 +62,15 @@ type Tool struct {
 	// otherwise settle the turn.
 	LimitLine string `toml:"limit_line"`
 	Rules     []Rule `toml:"rules"`
+	// RulesFiles names the instruction files this tool reads before its
+	// first turn: CLAUDE.md, AGENTS.md, GEMINI.md and the global copy the
+	// tool keeps per machine. Unrelated to Rules above, which classify pane
+	// output; these are what the agent is told, and what the i key lists.
+	//
+	// A bare or relative name is looked for in the session's directory and
+	// every directory up to the repository root. One starting with ~ or /
+	// is a single path outside the project.
+	RulesFiles []string `toml:"rules_files"`
 }
 
 type Config struct {
@@ -194,6 +203,9 @@ func mergeTool(name string, user, def Tool) Tool {
 	if name == "claude" && user.BusyLine == busyLineAgentsOnly {
 		user.BusyLine = def.BusyLine
 	}
+	if len(user.RulesFiles) == 0 {
+		user.RulesFiles = def.RulesFiles
+	}
 	if len(user.Rules) == 0 {
 		user.Rules = def.Rules
 	} else if name == "codex" {
@@ -298,8 +310,17 @@ const defaultConfig = `poll_interval = "2s"
 # region stops changing and nothing matches, its last content line
 # decides finished versus waiting (question mark waits).
 
+#
+# rules_files is a different thing from rules: the instruction files the tool
+# reads before its first turn, which "i" lists and opens. A bare name is
+# looked for in the session's directory and up to the repository root; a name
+# starting with ~ or / is the global copy the tool keeps per machine. Change
+# them if your tool reads somewhere else; a tool listing none is looked up
+# under AGENTS.md.
+
 [tools.claude]
 command = "claude"
+rules_files = ["CLAUDE.md", "CLAUDE.local.md", "~/.claude/CLAUDE.md"]
 # revive (v) launches a new session with this id, so it can later resume
 # that exact conversation regardless of what else ran in the directory
 session_id_flag = "--session-id"
@@ -336,6 +357,7 @@ rules = [
 
 [tools.opencode]
 command = "opencode"
+rules_files = ["AGENTS.md", "~/.config/opencode/AGENTS.md"]
 # opencode mints its own session id; capture it after launch and resume it
 session_store = "opencode"
 resume_by_id_command = "opencode --session {id}"
@@ -360,6 +382,7 @@ rules = [
 
 [tools.codex]
 command = "codex"
+rules_files = ["AGENTS.md", "~/.codex/AGENTS.md"]
 # codex mints its own session id; capture it after launch and resume it
 session_store = "codex"
 resume_by_id_command = "codex resume {id}"
@@ -388,6 +411,7 @@ rules = [
 
 [tools.grok]
 command = "grok"
+rules_files = ["AGENTS.md"]
 session_id_flag = "--session-id"
 resume_by_id_command = "grok --resume {id}"
 fork_command = "grok --resume {id} --fork-session --session-id {new_id}"
@@ -416,6 +440,7 @@ rules = [
 
 [tools.gemini]
 command = "gemini"
+rules_files = ["GEMINI.md", "~/.gemini/GEMINI.md"]
 # revive (v) launches a new session with this id, so it can later resume
 # that exact conversation regardless of what else ran in the directory
 session_id_flag = "--session-id"
@@ -452,6 +477,7 @@ rules = [
 [tools.hermes]
 # The classic REPL exposes stable prompt markers for status and prompt delivery.
 command = "hermes --cli"
+rules_files = ["AGENTS.md"]
 # Hermes creates its session id on first input and records it in state.db.
 session_store = "hermes"
 resume_by_id_command = "hermes --cli --resume {id}"
@@ -488,6 +514,7 @@ default_status = "idle"
 
 [tools.pi]
 command = "pi"
+rules_files = ["AGENTS.md"]
 session_id_flag = "--session-id"
 resume_by_id_command = "pi --session {id}"
 fork_command = "pi --fork {id} --session-id {new_id}"
