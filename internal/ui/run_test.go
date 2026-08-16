@@ -930,3 +930,58 @@ func TestSessionRunningSeesACommandTmuxCannotName(t *testing.T) {
 		t.Fatal("a shell alone should not read as running")
 	}
 }
+
+// The indicator rendered but never moved, because the refresh handler has
+// two return paths and only the rare one carried the tick. The common path
+// dropped it while still latching waving, so the branch that starts the tick
+// never fired again and the glyph froze on frame 0 — which, being the lowest
+// bar, reads as nothing at all.
+//
+// Asserts the command actually comes back, not merely that the flag was set:
+// the broken version set the flag too.
+func TestRefreshHandsBackTheWaveTick(t *testing.T) {
+	m := buildModel(t)
+	dir := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"cat\"\n")
+	onSessionIn(t, m, dir)
+	pressRunKey(t, m)
+	run, _ := m.selected()
+
+	// The steady state: a running script, and a selection that has not moved,
+	// which is the path the indicator has to survive.
+	m.waving = false
+	m.paneProcs = map[string]int{run.ID: 2}
+	m.paneCommands = map[string]string{run.ID: "bash"}
+	msg := refreshMsg{
+		sessions:     m.sessions,
+		paneProcs:    m.paneProcs,
+		paneCommands: m.paneCommands,
+		procFor:      m.procFor,
+	}
+	_, cmd := m.Update(msg)
+	if cmd == nil {
+		t.Fatal("refresh returned no command at all")
+	}
+	if !containsWaveTick(t, cmd) {
+		t.Fatal("refresh did not hand back the wave tick, so the indicator would freeze")
+	}
+}
+
+// containsWaveTick runs a command tree and reports whether a wave tick is in
+// it. Batches nest, so it descends rather than assuming a shape.
+func containsWaveTick(t *testing.T, cmd tea.Cmd) bool {
+	t.Helper()
+	if cmd == nil {
+		return false
+	}
+	switch msg := cmd().(type) {
+	case waveTickMsg:
+		return true
+	case tea.BatchMsg:
+		for _, inner := range msg {
+			if containsWaveTick(t, inner) {
+				return true
+			}
+		}
+	}
+	return false
+}

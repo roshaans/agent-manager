@@ -1109,6 +1109,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.paneProcs = msg.paneProcs
 		// A run script that started or ended between polls decides whether
 		// the indicator needs a tick at all.
+		// Every return path below has to carry this: latching waving without
+		// handing the command back leaves the flag set, so the branch that
+		// starts the tick never fires again and the indicator freezes on
+		// whichever frame it was on.
 		wave := tea.Cmd(nil)
 		if m.anyRunning() && !m.waving {
 			m.waving = true
@@ -1157,7 +1161,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.watchSelection()
 		}
 		m.watchedGen = m.previewGen
-		return m, tea.Batch(focusExit, m.diffRefreshCmd())
+		return m, tea.Batch(focusExit, wave, m.diffRefreshCmd())
 
 	case updateMsg:
 		if msg.manual {
