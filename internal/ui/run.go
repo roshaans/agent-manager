@@ -168,21 +168,23 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 		m.errBar.text = `no shell configured: add a tool block with shell = true to config.toml`
 		return m, nil
 	}
-	// Named for the session it runs beside, so several worktrees running the
-	// same script stay tellable apart in the list.
+	// Named for and linked to the session it runs beside, so several
+	// worktrees running the same script stay tellable apart in the list.
 	label := name
-	if entry, ok := m.selectedRow(); ok && !entry.isGroup {
-		label = name + "-" + entry.sess.Name
+	parent, fromSession := m.shellOrigin()
+	if fromSession {
+		label = m.unusedName(name + "-" + parent.Name)
 	}
 	// Probed before the script starts, or its own server is what we find.
 	busy := settings.BlockBusy(portKey(dir))
 	sess := store.Session{
-		ID:     newID(),
-		Name:   label,
-		Tool:   toolName,
-		Cwd:    dir,
-		Group:  m.contextGroup(),
-		Status: status.Starting,
+		ID:       newID(),
+		Name:     label,
+		Tool:     toolName,
+		Cwd:      dir,
+		Group:    m.contextGroup(),
+		Status:   status.Starting,
+		ParentID: parent.ID,
 	}
 	if err := m.launchNewSession(sess, tool, run.Command, launchOptions{
 		env: settings.Env(portKey(dir)),

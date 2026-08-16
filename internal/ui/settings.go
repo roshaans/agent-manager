@@ -155,14 +155,16 @@ func storedComfortableRows(st *store.Store) bool {
 	return chosen == "comfortable"
 }
 
-// storedShellsPinned reads the persisted terminal placement. Pinned is the
-// default; only an explicit "inline" leaves shells among the agents.
+// storedShellsPinned reads the persisted terminal placement. Nesting each
+// shell under the session it was opened for is the default, since that is
+// the one placement saying which worktree a terminal belongs to without
+// having to be read; only an explicit "pinned" gathers them into a block.
 func storedShellsPinned(st *store.Store) bool {
 	chosen, err := st.Setting(terminalPlacementSetting)
 	if err != nil {
-		return true
+		return false
 	}
-	return chosen != "inline"
+	return chosen == "pinned"
 }
 
 // enterFocuses reports which key opens a session where. Enter focuses the
