@@ -1,5 +1,10 @@
 /agent-manager
 /am
+
+# nix build output symlinks
+/result
+/result-*
+
 .worktrees/
 .claude/worktrees/
 *.db

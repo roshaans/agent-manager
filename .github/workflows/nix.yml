@@ -1,0 +1,26 @@
+# Fork-only workflow. Deliberately a separate file from upstream's ci.yml so
+# rebasing onto new upstream tags never conflicts here.
+name: nix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+      - name: nix build
+        run: nix build .#agent-manager --print-build-logs
+      - name: smoke test the built binary
+        run: ./result/bin/agent-manager --version
