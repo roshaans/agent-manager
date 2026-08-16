@@ -16,6 +16,16 @@ import (
 	"github.com/YoanWai/agent-manager/internal/hooks"
 )
 
+// TestMain stops the machine's own git config from signing the commits these
+// tests make. A signing agent that has locked asks for a passphrase, and a
+// prompt nobody is there to answer hangs the run instead of failing it.
+func TestMain(m *testing.M) {
+	os.Setenv("GIT_CONFIG_COUNT", "1")
+	os.Setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
+	os.Setenv("GIT_CONFIG_VALUE_0", "false")
+	os.Exit(m.Run())
+}
+
 func TestPrintHelpDoesNotRequireATerminal(t *testing.T) {
 	var out bytes.Buffer
 	if err := printHelp(&out); err != nil {
