@@ -62,8 +62,11 @@ buildGoModule (finalAttrs: {
   #   TestQuickWorktreeToggle
   #     needs a git repo; fileset.toSource deliberately excludes .git, so the
   #     alt+w toggle correctly refuses with "not a git repo".
+  #   TestRunIndicatorAppearsThroughAPoll
+  #     reads a pane's process tree through ps, which the sandbox restricts
+  #     the same way it restricts the two above.
   checkFlags = [
-    "-skip=^(TestTreesSelf|TestSampleMemoryMatchesVMStatOnDarwin|TestQuickWorktreeToggle)$"
+    "-skip=^(TestTreesSelf|TestSampleMemoryMatchesVMStatOnDarwin|TestQuickWorktreeToggle|TestRunIndicatorAppearsThroughAPoll)$"
   ];
 
   # tools/badges is a CI helper that builds alongside the TUI. Its tests are
