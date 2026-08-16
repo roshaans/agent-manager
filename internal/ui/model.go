@@ -532,6 +532,7 @@ func New(cfg config.Config, st *store.Store, driver *tmux.Driver, engine *status
 	// works without it, so the error surfaces on first use instead.
 	gitDriver, _ := git.New()
 	applyTheme(themes[themeIndex(resolveStartupTheme(st))])
+	sweepIncidentalPlacement(st)
 	model := &Model{
 		cfg:                 cfg,
 		store:               st,

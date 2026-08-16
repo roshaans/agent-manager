@@ -477,6 +477,10 @@ const worktreeSetting = "worktree_default"
 // falling back to its group when there is no such session.
 const terminalPlacementSetting = "terminal_placement"
 
+// terminalPlacementSweptSetting marks the one-time clearing of a placement
+// the old settings save wrote without anyone choosing it.
+const terminalPlacementSweptSetting = "terminal_placement_swept"
+
 const notificationsSetting = "notifications"
 
 const notifyFinishedSetting = "notify_finished"

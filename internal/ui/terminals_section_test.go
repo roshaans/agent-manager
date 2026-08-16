@@ -576,6 +576,18 @@ func TestTerminalPlacementPersists(t *testing.T) {
 	}
 }
 
+// seedUnsweptPlacement puts a store back the way an upgrade finds one: a
+// stored placement, and no marker saying it has been looked at.
+func seedUnsweptPlacement(t *testing.T, m *Model, placement string) {
+	t.Helper()
+	if err := m.store.SetSetting(terminalPlacementSetting, placement); err != nil {
+		t.Fatalf("seed placement: %v", err)
+	}
+	if err := m.store.SetSetting(terminalPlacementSweptSetting, ""); err != nil {
+		t.Fatalf("clear sweep marker: %v", err)
+	}
+}
+
 // Nesting is what a fresh install gets: it is the one placement that says
 // which worktree a terminal belongs to without having to be read.
 func TestNestingIsTheDefaultPlacement(t *testing.T) {
@@ -585,5 +597,45 @@ func TestNestingIsTheDefaultPlacement(t *testing.T) {
 	}
 	if storedShellsPinned(m.store) {
 		t.Fatal("an unset placement reads as nested")
+	}
+}
+
+// Every install predating nesting carries a "pinned" the old settings save
+// wrote for it, which would leave the new default reaching nobody. It is
+// cleared once — and only once, so a pinned chosen afterwards is kept.
+func TestIncidentalPinnedIsSweptOnce(t *testing.T) {
+	m := buildModel(t)
+	// New() sweeps on boot, so the install has to be put back the way an
+	// upgrade finds one: a placement written for it, and no marker.
+	seedUnsweptPlacement(t, m, "pinned")
+
+	sweepIncidentalPlacement(m.store)
+	if storedShellsPinned(m.store) {
+		t.Fatal("a pinned nobody chose should be swept back to the default")
+	}
+
+	// A later choice is a real one, and the sweep is spent.
+	if err := m.store.SetSetting(terminalPlacementSetting, "pinned"); err != nil {
+		t.Fatalf("choose placement: %v", err)
+	}
+	sweepIncidentalPlacement(m.store)
+	if !storedShellsPinned(m.store) {
+		t.Fatal("a pinned chosen after the sweep must survive")
+	}
+}
+
+// A fresh install has nothing to sweep, and must not be left reading as
+// though it had chosen anything.
+func TestSweepLeavesAFreshInstallAlone(t *testing.T) {
+	m := buildModel(t)
+	seedUnsweptPlacement(t, m, "")
+	sweepIncidentalPlacement(m.store)
+
+	if storedShellsPinned(m.store) {
+		t.Fatal("the sweep should leave an unset placement nested")
+	}
+	chosen, err := m.store.Setting(terminalPlacementSetting)
+	if err != nil || chosen != "" {
+		t.Fatalf("placement = %q err %v, want it still unset", chosen, err)
 	}
 }

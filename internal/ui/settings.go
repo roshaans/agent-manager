@@ -167,6 +167,33 @@ func storedShellsPinned(st *store.Store) bool {
 	return chosen == "pinned"
 }
 
+// sweepIncidentalPlacement clears a placement nobody picked, once. Closing
+// the settings modal writes every setting it holds, placement included, so
+// every install predating nesting carries a "pinned" that was the old
+// default rather than a choice — and a default the stored value overrides
+// reaches nobody. The marker is what keeps this to one sweep: a "pinned"
+// chosen after it is a real choice and survives every later start. A failed
+// write leaves the marker unset and the sweep runs again next time, which
+// is the same work rather than a wrong answer.
+func sweepIncidentalPlacement(st *store.Store) {
+	swept, err := st.Setting(terminalPlacementSweptSetting)
+	if err != nil || swept != "" {
+		return
+	}
+	chosen, err := st.Setting(terminalPlacementSetting)
+	if err != nil {
+		return
+	}
+	if chosen == "pinned" {
+		// Emptied rather than set to "inline": the user has still chosen
+		// nothing, so the placement follows whatever the default becomes.
+		if err := st.SetSetting(terminalPlacementSetting, ""); err != nil {
+			return
+		}
+	}
+	_ = st.SetSetting(terminalPlacementSweptSetting, "done")
+}
+
 // enterFocuses reports which key opens a session where. Enter focuses the
 // preview and A attaches full screen by default; a stored "attach" choice
 // swaps the pair. Cached on the model because the footer reads it every
