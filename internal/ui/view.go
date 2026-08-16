@@ -34,6 +34,8 @@ func (m *Model) View() string {
 		frame = m.viewMove()
 	case modeRepoPick:
 		frame = m.viewRepoPick()
+	case modeRunPick:
+		frame = m.viewRunPick()
 	case modeGroupForm:
 		frame = m.viewGroupForm()
 	case modeDiff:
@@ -449,7 +451,7 @@ func (m *Model) viewFooter() string {
 	if m.mode == modeFocus {
 		pairs := [][2]string{
 			{"typing", "goes to the agent"},
-			{"ctrl+q / ctrl+\\", "back to manager"},
+			{"esc esc / ctrl+q", "back to manager"},
 			{"ctrl+r", "review"},
 			{"ctrl+o", "editor"},
 			// The footer holds one row: the word and line gestures are in

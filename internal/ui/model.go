@@ -47,6 +47,9 @@ const (
 	// modeFocus routes the keyboard into the selected session's pane while
 	// the list and live preview stay on screen.
 	modeFocus
+	// modeRunPick lists a project's run scripts when p cannot tell which one
+	// was meant.
+	modeRunPick
 )
 
 type treeRow struct {
@@ -116,6 +119,10 @@ type Model struct {
 	// focusScroll is how many lines the focused pane is scrolled back into
 	// its history; zero is live at the bottom.
 	focusScroll int
+	// lastEsc is when the focused pane last took an Escape, so a second one
+	// close behind it reads as the double-Escape that leaves focus. Zero
+	// means no Escape is open: any other key closes the run.
+	lastEsc time.Time
 	// focusOnEnter mirrors the persisted focus-key setting; the footer
 	// reads it every frame, so it lives here instead of the store.
 	focusOnEnter bool
@@ -157,6 +164,7 @@ type Model struct {
 	moveID     string
 	movePath   string
 	repoPick   repoPickState
+	runPick    runPickState
 	// editorReturnID is the session an editor request detached from, so the
 	// attach it cost can be resumed once the editor is up.
 	editorReturnID string

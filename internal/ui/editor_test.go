@@ -155,8 +155,9 @@ func TestResolveEditorPrecedence(t *testing.T) {
 		{"config over environment", "cfg-edit", map[string]string{"AGENT_MANAGER_EDITOR": "env-edit"}, []string{"code"}, "cfg-edit"},
 		{"environment over PATH", "", map[string]string{"AGENT_MANAGER_EDITOR": "env-edit"}, []string{"code"}, "env-edit"},
 		{"first GUI editor on PATH wins", "", nil, []string{"zed", "cursor"}, "cursor"},
-		{"PATH over $VISUAL", "", map[string]string{"VISUAL": "vim"}, []string{"code"}, "code"},
-		{"$VISUAL over $EDITOR", "", map[string]string{"VISUAL": "vim", "EDITOR": "nano"}, nil, "vim"},
+		{"PATH over $VISUAL", "", map[string]string{"VISUAL": "vim"}, []string{"code", "vim"}, "code"},
+		{"$VISUAL over $EDITOR", "", map[string]string{"VISUAL": "vim", "EDITOR": "nano"}, []string{"vim", "nano"}, "vim"},
+		{"$EDITOR over a terminal editor on PATH", "", map[string]string{"EDITOR": "nano"}, []string{"nano", "nvim"}, "nano"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Model{cfg: config.Config{Editor: tc.configured}}
@@ -176,7 +177,7 @@ func TestResolveEditorPrecedence(t *testing.T) {
 // rather than being started where it cannot draw.
 func TestResolveEditorFallsBackToEnvironment(t *testing.T) {
 	m := buildModel(t)
-	captureEditor(t)
+	captureEditor(t, "nvim")
 	t.Setenv("EDITOR", "nvim")
 
 	if got := m.resolveEditor(); got != "nvim" {
@@ -184,6 +185,53 @@ func TestResolveEditorFallsBackToEnvironment(t *testing.T) {
 	}
 	if detachedEditors[editorName("nvim")] {
 		t.Fatal("nvim draws in this terminal and must not start detached")
+	}
+}
+
+// $EDITOR is routinely a shell function or an alias, which exists for the
+// shell that exported it and cannot be exec'd here. The machine's own
+// terminal editor opens instead of the launch failing on a name nothing
+// can run.
+func TestResolveEditorSkipsAnEnvironmentEditorItCannotRun(t *testing.T) {
+	m := buildModel(t)
+	captureEditor(t, "nvim")
+	t.Setenv("EDITOR", "edit_in_parent_nvim")
+
+	if got := m.resolveEditor(); got != "nvim" {
+		t.Fatalf("resolveEditor() = %q, want nvim", got)
+	}
+}
+
+// Nothing on PATH and nothing runnable in the environment is still an
+// empty answer, which is what the refusal is built on.
+func TestResolveEditorFindsNothingWhenNothingIsInstalled(t *testing.T) {
+	m := buildModel(t)
+	captureEditor(t)
+	t.Setenv("EDITOR", "edit_in_parent_nvim")
+
+	if got := m.resolveEditor(); got != "" {
+		t.Fatalf("resolveEditor() = %q, want no editor", got)
+	}
+}
+
+// A terminal editor is only reached once the environment has had its turn,
+// and it takes the screen rather than starting where it cannot draw.
+func TestOpenEditorFallsBackToATerminalEditorOnPath(t *testing.T) {
+	m := buildModel(t)
+	launched := captureEditor(t, "vim")
+	t.Setenv("EDITOR", "edit_in_parent_nvim")
+	createSession(t, m, "agent", t.TempDir(), "")
+	m.selectSessionRow(t, "agent")
+
+	_, cmd := m.openEditor()
+	if cmd == nil {
+		t.Fatalf("openEditor returned no command, err = %q", m.errBar.text)
+	}
+	if len(*launched) != 0 {
+		t.Fatalf("a terminal editor must not start detached, got %v", *launched)
+	}
+	if m.errBar.text != "" {
+		t.Fatalf("the fallback should not report a problem, got %q", m.errBar.text)
 	}
 }
 

@@ -544,6 +544,59 @@ func TestFocusModeCtrlBackslashUnfocuses(t *testing.T) {
 	}
 }
 
+// A double Escape mirrors ctrl+q, while a lone Escape - or one whose
+// partner arrives late, or with another key between them - stays with the
+// agent.
+func TestFocusModeDoubleEscUnfocuses(t *testing.T) {
+	m := buildModel(t)
+	createSession(t, m, "focusme", t.TempDir(), "")
+	m.selectSessionRow(t, "focusme")
+
+	focus := func() {
+		t.Helper()
+		updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		*m = *updated.(*Model)
+		if m.mode != modeFocus {
+			t.Fatalf("after enter, mode = %v, err = %q", m.mode, m.errBar.text)
+		}
+	}
+	press := func(msg tea.KeyMsg) {
+		t.Helper()
+		updated, _ := m.handleKey(msg)
+		*m = *updated.(*Model)
+	}
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+
+	focus()
+	press(esc)
+	if m.mode != modeFocus {
+		t.Fatalf("one esc left mode = %v", m.mode)
+	}
+	press(esc)
+	if m.mode != modeList {
+		t.Fatalf("esc esc left mode = %v", m.mode)
+	}
+
+	// Too slow to pair: the first esc has aged out of the window.
+	focus()
+	press(esc)
+	m.lastEsc = time.Now().Add(-2 * doubleEscWindow)
+	press(esc)
+	if m.mode != modeFocus {
+		t.Fatalf("a late second esc left mode = %v", m.mode)
+	}
+
+	// A key between the two closes the run.
+	press(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	press(esc)
+	if m.mode != modeFocus {
+		t.Fatalf("an interrupted esc run left mode = %v", m.mode)
+	}
+	if m.errBar.text != "" {
+		t.Fatalf("forwarding set err: %q", m.errBar.text)
+	}
+}
+
 // caretModel is a focused model whose pane mirror is posed by hand: the
 // captured rows, and the caret cell tmux reported over them.
 func caretModel(t *testing.T, cursor paneCursor, rows ...string) *Model {

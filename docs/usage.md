@@ -14,6 +14,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 |-----|--------|
 | `n` | New session (name, tool, directory, worktree toggle, optional starting prompt, group picker) |
 | `T` | New terminal tab: a plain shell in the selected group, with no agent in it |
+| `p` | Run a project script from `.agent-manager/settings.toml` in the row's directory ([Project settings](project-settings.md)) |
 | `o` | Open the selected row's directory in your editor |
 | `f` | Fork the selected conversation into a named session in the same group and directory |
 | `g` | New group (name, parent, default path) |
@@ -82,9 +83,9 @@ A shell left on its empty command carries no session id, so `agent-manager renam
 
 `o` opens the row under the cursor in your editor: a session's live working directory (wherever its shell or agent has moved to, not only where it started), the directory it was created in when the live one cannot be read, or a group's default path. It works on a [terminal tab](#terminal-tabs) too — the shell you ran the build in is usually sitting in the directory you want open.
 
-Agent Manager takes the first of these it finds: `editor` in [config.toml](configuration.md), `$AGENT_MANAGER_EDITOR`, a GUI editor on `PATH` (`code`, `cursor`, `windsurf`, `zed`, `subl`, `idea`), then `$VISUAL` or `$EDITOR`. The environment comes last because it usually names the editor you set for git commit messages rather than the one a project should open in.
+Agent Manager takes the first of these it finds: `editor` in [config.toml](configuration.md), `$AGENT_MANAGER_EDITOR`, a GUI editor on `PATH` (`code`, `cursor`, `windsurf`, `zed`, `subl`, `idea`), then `$VISUAL` or `$EDITOR`, and last a terminal editor on `PATH` (`nvim`, `vim`, `hx`, `emacs`, `nano`, `vi`). The environment comes after the GUI editors because it usually names the editor you set for git commit messages rather than the one a project should open in.
 
-The line is run directly, never through a shell, so nothing in it is expanded and an `.envrc` that sets `EDITOR` cannot smuggle a command in behind it. Arguments are allowed, and quotes group one that carries a space: `editor = "code -n"`, `editor = "open -a 'Visual Studio Code'"`.
+The line is run directly, never through a shell, so nothing in it is expanded and an `.envrc` that sets `EDITOR` cannot smuggle a command in behind it. Arguments are allowed, and quotes group one that carries a space: `editor = "code -n"`, `editor = "open -a 'Visual Studio Code'"`. Because there is no shell, a `$VISUAL` or `$EDITOR` that names a shell function or an alias is nothing this process can run, so it is passed over for the terminal editor on `PATH` instead of failing on it. A configured `editor` is always taken at its word: point it at a script if you want a wrapper.
 
 Inside a session, attached or focused, `ctrl+o` opens that session's directory the same way. It costs an attach its client, so the manager steps back into the session once a windowed editor is running, or once one that draws in the terminal exits. An editor that fails to start keeps the manager on screen, where you can read why.
 

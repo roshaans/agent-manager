@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/YoanWai/agent-manager/internal/tmux"
@@ -15,6 +16,11 @@ import (
 // whose byte values double as named keys (Tab is Ctrl+I, Enter is Ctrl+M)
 // get their proper names.
 var focusNamedKeys = map[tea.KeyType]string{}
+
+// doubleEscWindow is how close two Escapes must fall to read as the pair
+// that leaves focus. Wide enough for a deliberate double tap, short enough
+// that an Escape sent to the agent minutes ago never arms the exit.
+const doubleEscWindow = 500 * time.Millisecond
 
 func init() {
 	for i := 1; i <= 26; i++ {
@@ -127,6 +133,7 @@ func (m *Model) focusSelected() (tea.Model, tea.Cmd) {
 	m.copied = 0
 	m.cursorOn = true
 	m.focusScroll = 0
+	m.lastEsc = time.Time{}
 	// Pane state from a previously watched session must not route this
 	// one's wheel; a fresh watcher's first pushed capture reports the real
 	// values. When the watcher is already streaming this session and the
@@ -194,16 +201,29 @@ func (m *Model) leaveFocus() tea.Cmd {
 	m.pending = pendingClick{}
 	m.clearForwardingMouse()
 	m.copied = 0
+	m.lastEsc = time.Time{}
 	return nil
 }
 
-// handleFocusKey forwards every key into the focused pane. Ctrl+Q and
-// ctrl+\ return to the list, Ctrl+R opens the review and Ctrl+O the editor,
-// mirroring the bindings a real attach gets, and every plain character - q
-// included - reaches the agent.
+// handleFocusKey forwards every key into the focused pane. Ctrl+Q, ctrl+\
+// and a double Escape return to the list, Ctrl+R opens the review and
+// Ctrl+O the editor, mirroring the bindings a real attach gets, and every
+// plain character - q included - reaches the agent.
 func (m *Model) handleFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+q" || msg.String() == `ctrl+\` {
 		return m, m.leaveFocus()
+	}
+	// A lone Escape still belongs to the agent - it is how a prompt is
+	// cleared and a turn interrupted - so the first one forwards as usual
+	// and only a second one close behind it leaves focus. The second is
+	// swallowed: the pane already took the interrupt from the first.
+	if msg.Type == tea.KeyEsc && !msg.Alt {
+		if !m.lastEsc.IsZero() && time.Since(m.lastEsc) < doubleEscWindow {
+			return m, m.leaveFocus()
+		}
+		m.lastEsc = time.Now()
+	} else {
+		m.lastEsc = time.Time{}
 	}
 	sess, ok := m.selected()
 	if !ok {

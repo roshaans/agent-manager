@@ -14,6 +14,12 @@ import (
 // preferred.
 var guiEditors = []string{"code", "cursor", "windsurf", "zed", "subl", "idea"}
 
+// termEditors are the last thing tried, once this machine has turned out
+// to have no windowed editor and no usable editor in its environment. They
+// draw in the terminal, which the manager can hand over, so a machine with
+// only a terminal editor still opens something rather than nothing.
+var termEditors = []string{"nvim", "vim", "hx", "emacs", "nano", "vi"}
+
 // detachedEditors open a window of their own and return at once, leaving
 // the manager on screen. Everything else takes the terminal over, which is
 // the safer way round: an editor that draws in the terminal is simply
@@ -94,8 +100,9 @@ func startEditorCmd(cmd *exec.Cmd, name, dir string) tea.Cmd {
 
 // resolveEditor picks the command that opens a directory: the configured
 // editor, then a GUI editor this machine has. $VISUAL and $EDITOR come
-// last because they usually name the editor set for git commit messages,
-// not the one a project is meant to open in.
+// after those because they usually name the editor set for git commit
+// messages, not the one a project is meant to open in, and a terminal
+// editor found on PATH comes after all of it.
 func (m *Model) resolveEditor() string {
 	candidates := []string{m.cfg.Editor, os.Getenv("AGENT_MANAGER_EDITOR")}
 	for _, line := range candidates {
@@ -108,12 +115,35 @@ func (m *Model) resolveEditor() string {
 			return name
 		}
 	}
+	// A configured editor is taken at its word, but these two are whatever
+	// the shell that started the manager happened to export, and that is
+	// routinely a shell function or an alias - an $EDITOR of
+	// "edit_in_parent_nvim" exists for the shell that defined it and
+	// nowhere else. Something the manager cannot run is not an editor, so
+	// it steps over it rather than failing on it.
 	for _, key := range []string{"VISUAL", "EDITOR"} {
-		if line := strings.TrimSpace(os.Getenv(key)); line != "" {
+		line := strings.TrimSpace(os.Getenv(key))
+		if line != "" && runnableEditor(line) {
 			return line
 		}
 	}
+	for _, name := range termEditors {
+		if _, err := lookPath(name); err == nil {
+			return name
+		}
+	}
 	return ""
+}
+
+// runnableEditor reports whether an editor line starts with a command this
+// process can actually exec: a name on PATH, or a path that names one.
+func runnableEditor(line string) bool {
+	argv := splitEditorLine(line)
+	if len(argv) == 0 {
+		return false
+	}
+	_, err := lookPath(argv[0])
+	return err == nil
 }
 
 // editorCommand builds the launch from an editor line and the directory to
