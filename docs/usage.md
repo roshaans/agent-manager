@@ -17,6 +17,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `p` | Run a project script from `.agent-manager/settings.toml` in the row's directory, or offer to create the file when the project has none ([Project settings](project-settings.md)) |
 | `o` | Open the selected row's directory in your editor |
 | `O` | Show what this worktree is running: its server in a browser, or a TUI run session's pane |
+| `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
 | `f` | Fork the selected conversation into a named session in the same group and directory |
 | `g` | New group (name, parent, default path) |
 | `enter` | Focus session in place (keys go to the agent, list stays) / fold group |
@@ -94,6 +95,14 @@ Inside a session, attached or focused, `ctrl+o` opens that session's directory t
 Like `ctrl+q` and `ctrl+r`, the manager keeps `ctrl+o` for itself inside a session, so a program running in there stops seeing it: in a [terminal tab](#terminal-tabs), `nano` saves with `ctrl+s` instead.
 
 A known windowed editor (the six above, plus `open` and `xdg-open`) starts detached and the manager stays on screen, with the status line naming what opened. Everything else takes the terminal over the way an attach does and hands it back on exit — that way round because a terminal editor started detached would have nowhere to draw, while a windowed one launched this way only costs a repaint.
+
+## lazygit
+
+`G` hands the terminal to [lazygit](https://github.com/jesseduffield/lazygit) on the repository under the cursor, the way an attach hands it over, and takes it back when lazygit quits. A session opens on its live working directory, so one spawned into a [worktree](#worktree-sessions) opens on its own branch rather than on the repository it branched from; a group row opens on its default path.
+
+It is the other half of `ctrl+r`. The [review](#diff-review) reads what an agent changed and sends comments back to it; lazygit is where you stage, commit, switch branches, stash and read the log. Neither replaces the other, so they keep separate keys.
+
+lazygit has to be on `PATH` — nothing is configurable here, and the status line says so when it is missing. A row whose directory is not inside a git repository says that instead of handing the screen to a program that would exit on its own error.
 
 ## Worktree sessions
 

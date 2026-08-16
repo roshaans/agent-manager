@@ -1421,16 +1421,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.requestRefresh()
 		return m, nil
 
+	case gitUIDoneMsg:
+		resume := m.restoreAfterScreen()
+		if msg.err != nil {
+			m.errBar.text = gitUI + ": " + msg.err.Error()
+			return m, resume
+		}
+		// A commit, a stash or a branch switch changes what every row's diff
+		// and preview are looking at, and nothing polls git for that.
+		m.requestRefresh()
+		return m, resume
+
 	case editorDoneMsg:
 		var resume tea.Cmd
 		if msg.tookScreen {
-			// The terminal comes back from an editor the way it comes back
-			// from an attach: painted in the editor's background, and
-			// without the mouse reporting focus mode armed on the way in.
-			SyncTerminalBackground()
-			if m.mode == modeFocus {
-				resume = tea.EnableMouseCellMotion
-			}
+			resume = m.restoreAfterScreen()
 		}
 		if msg.err != nil {
 			// Going back into the session would hide the only account of

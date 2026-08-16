@@ -80,6 +80,7 @@ The full reference, every key, the quick prompt, killing and reviving, diff revi
 | `enter` | Focus the session in place; keys go to the agent while the list stays |
 | `→` / `←` | Step in and out: `→` focuses the session or opens the group, `←` closes the group and, at the start of a focused agent's prompt, comes back to the list. In beta, and Settings can turn the pair off |
 | `ctrl+r` | Review the session's changes as full-file diffs; `c` comments a line, `C` sends the comments to the agent |
+| `G` | Hand the terminal to lazygit on the row's repository — a worktree session opens on its own branch — and take it back when it quits |
 | `x` / `v` | Kill a session to free its RAM / revive it on its own conversation |
 | `R` | Restart a session on an empty context: same name, group, directory and tool, fresh conversation |
 | `s` | Settings (default tool, theme or follow the OS light/dark mode, list density, review layout, desktop notifications) |

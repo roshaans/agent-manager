@@ -485,7 +485,7 @@ func (m *Model) rowLegend() legendSection {
 			foldAction = "unfold"
 		}
 		return legendSection{title: "Group", pairs: [][2]string{
-			{"↵", foldAction}, {"o", "editor"}, {"r", "rename"}, {"m", "move"},
+			{"↵", foldAction}, {"o", "editor"}, {"G", "lazygit"}, {"r", "rename"}, {"m", "move"},
 			{"x/X", "kill / all"}, {"v/V", "revive / all"},
 			{"a/u", "archive / restore"}, {"d", "delete"},
 		}}
@@ -502,10 +502,10 @@ func (m *Model) rowLegend() legendSection {
 		pairs = append(pairs, [2]string{".", "mark idle"})
 	}
 	pairs = append(pairs, conversation...)
-	// o sits outside the conversation keys: a shell's directory is worth
-	// opening as much as an agent's.
+	// o and G sit outside the conversation keys: a shell's directory is worth
+	// opening, and its repository worth reading, as much as an agent's.
 	pairs = append(pairs, [][2]string{
-		{"o", "editor"}, {"r", "rename"}, {"m", "move"},
+		{"o", "editor"}, {"G", "lazygit"}, {"r", "rename"}, {"m", "move"},
 		{"x/X", "kill / all"}, {"v/V", "revive / all"}, {"R", "restart"},
 		{"a/u", "archive / restore"}, {"d", "delete"},
 	}...)

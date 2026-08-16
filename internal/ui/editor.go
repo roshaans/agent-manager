@@ -63,6 +63,19 @@ type editorDoneMsg struct {
 	tookScreen bool
 }
 
+// restoreAfterScreen puts the terminal back the way a full-screen program
+// found it. The screen comes back painted in that program's background and
+// without the mouse reporting focus mode arms on the way in, so every
+// overlay that takes the terminal — an editor, lazygit — ends here rather
+// than repeating the pair.
+func (m *Model) restoreAfterScreen() tea.Cmd {
+	SyncTerminalBackground()
+	if m.mode == modeFocus {
+		return tea.EnableMouseCellMotion
+	}
+	return nil
+}
+
 func (m *Model) openEditor() (tea.Model, tea.Cmd) {
 	if _, ok := m.selectedRow(); !ok {
 		return m, nil

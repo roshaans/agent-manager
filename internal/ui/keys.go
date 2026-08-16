@@ -164,6 +164,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openEditor()
 	case "O", "shift+o":
 		return m.openKey()
+	case "G", "shift+g":
+		return m.gitKey()
 	case "e":
 		return m, m.toggleEmptyGroups()
 	case "/":
