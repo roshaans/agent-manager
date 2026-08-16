@@ -177,14 +177,23 @@ func (m *Model) openRulesFile(file rules.File) (tea.Model, tea.Cmd) {
 // is routinely the one part missing.
 func (m *Model) editRulesFile(file rules.File) (tea.Model, tea.Cmd) {
 	m.mode = modeList
+	reason := ""
 	if !file.Exists {
 		if err := rules.Create(file.Path); err != nil {
 			m.errBar.text = err.Error()
 			return m, nil
 		}
-		m.reportDone("created " + file.Path)
+		reason = "created " + file.Path
+		m.reportDone(reason)
 	}
-	return m.openInEditor(file.Path)
+	model, cmd := m.openInEditor(file.Path)
+	// An editor that could not launch must not take the message naming the
+	// file with it: on a machine without one, the path is the whole of what
+	// the reader needs. Same shape as openSettingsFile.
+	if reason != "" && !m.errBar.worked() {
+		m.errBar.text = reason + " — " + m.errBar.text
+	}
+	return model, cmd
 }
 
 func (m *Model) viewRulesPick() string {
