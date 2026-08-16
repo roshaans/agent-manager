@@ -1078,6 +1078,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleBrowserOpen(msg)
 		return m, nil
 
+	case prLinkMsg:
+		// The URL, not "opening the pull request": it is what says which of
+		// the two answers came back, and which repository it came back for.
+		m.reportDone("opening " + msg.target)
+		return m, openLink(msg.target)
+
 	case previewTickMsg:
 		m.startupPhase++
 		// Only the list keeps a live pane on screen; review and the modal
