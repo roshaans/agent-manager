@@ -498,16 +498,20 @@ func envPairs(env map[string]string) []string {
 	return pairs
 }
 
-// waveFrames is the run indicator: a single cell rising and falling, so a
-// script that is still going reads as alive at a glance. One column wide so
-// it sits in the glyph the row already has rather than taking space from the
-// name, and short enough that the whole cycle is legible.
-var waveFrames = []rune{'▁', '▂', '▄', '▆', '█', '▆', '▄', '▂'}
+// waveFrames is the run indicator: a braille spinner, one cell wide, in
+// place of the glyph the row already has.
+//
+// Every frame carries the same amount of ink, which is what an earlier
+// bottom-filling bar got wrong — half its cycle sat at ▁ or ▂, so the
+// indicator spent half its life looking like an empty cell and read as
+// nothing at all. Motion has to come from where the ink is, not how much
+// there is.
+//
+// Distinct from startupFrames, the thin arcs a launching session uses:
+// starting and running are different states and should not share a shape.
+var waveFrames = []rune{'⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'}
 
-// waveInterval is how often the indicator advances. Fast enough to read as
-// motion, slow enough that a repaint every tick is nothing: the frame is
-// rebuilt from data already in memory, with no tmux call behind it.
-const waveInterval = 180 * time.Millisecond
+const waveInterval = 110 * time.Millisecond
 
 type waveTickMsg struct{}
 

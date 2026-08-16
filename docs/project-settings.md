@@ -133,8 +133,7 @@ channel between them, and a dev server started while dependencies are still
 installing fails in a way that looks like the project's fault. If setup never
 finishes, they give up after fifteen minutes and say so.
 
-A run script that is still going shows a small rising-and-falling bar in
-place of its row's glyph, so a server that died stops looking exactly like
+A run script that is still going spins in place of its row's glyph, so a server that died stops looking exactly like
 one that is serving. It is driven by the pane's foreground command — a shell
 has no turns for the status engine to track — and its tick only exists while
 something is actually running, so an idle manager schedules nothing.
