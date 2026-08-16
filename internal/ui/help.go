@@ -115,7 +115,7 @@ func helpSections() []helpSection {
 		{title: "inside a session (attached or focused)", rows: [][2]string{
 			{"typing", "goes straight to the agent, q included"},
 			{"ctrl+q", "back to the manager (ctrl+\\ too)"},
-			{"esc esc", "focused: back to the manager, one esc still interrupts"},
+			{"esc esc", "focused: back to the manager, without interrupting the agent"},
 			{"←", "focused: back to the manager, at the prompt's start"},
 			{"ctrl+r", "review the session's diff, esc returns"},
 			{"ctrl+o", "open its directory in an editor"},

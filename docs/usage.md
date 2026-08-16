@@ -22,6 +22,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `enter` | Focus session in place (keys go to the agent, list stays) / fold group |
 | `A` | Attach session full screen (Settings can swap it with `enter`) |
 | `ctrl+q` / `ctrl+\` | Inside a session: back to the manager when the terminal and tmux leave the key available |
+| `esc` `esc` | Focused: back to the manager, leaving a working agent working. Neither Escape reaches it; a single `esc` still does, half a second later, so it keeps clearing the prompt and interrupting a turn |
 | tmux prefix, then `d` | Inside a full-screen attach: back to the manager when the prefix reaches the inner tmux |
 | `ctrl+o` | Inside a session: open its directory in your editor |
 | `→` | Step into the row: focus the session, or open the group. In beta; Settings (`s`) can turn the pair off |

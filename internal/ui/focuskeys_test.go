@@ -597,6 +597,137 @@ func TestFocusModeDoubleEscUnfocuses(t *testing.T) {
 	}
 }
 
+// capturePaneKeys swaps the send seam so a test can read the keys a focused
+// pane was given, in the order it was given them.
+func capturePaneKeys(t *testing.T) *[]string {
+	t.Helper()
+	var sent []string
+	prev := runPaneCommand
+	runPaneCommand = func(_ *Model, command string) error {
+		sent = append(sent, command)
+		return nil
+	}
+	t.Cleanup(func() { runPaneCommand = prev })
+	return &sent
+}
+
+// escModel is a focused session with the send seam captured: what the pane
+// was given is the whole point of the Escape tests.
+func escModel(t *testing.T) (*Model, *[]string) {
+	t.Helper()
+	m := buildModel(t)
+	sent := capturePaneKeys(t)
+	createSession(t, m, "focusme", t.TempDir(), "")
+	m.selectSessionRow(t, "focusme")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	*m = *updated.(*Model)
+	if m.mode != modeFocus {
+		t.Fatalf("after enter, mode = %v, err = %q", m.mode, m.errBar.text)
+	}
+	*sent = nil
+	return m, sent
+}
+
+func pressFocus(t *testing.T, m *Model, msg tea.KeyMsg) tea.Cmd {
+	t.Helper()
+	updated, cmd := m.handleKey(msg)
+	*m = *updated.(*Model)
+	return cmd
+}
+
+// The gesture that leaves a working agent must not interrupt it on the way
+// out: Escape is what a CLI cancels a turn on, so neither of the pair is
+// forwarded.
+func TestFocusEscPairNeverReachesTheAgent(t *testing.T) {
+	m, sent := escModel(t)
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+
+	pressFocus(t, m, esc)
+	if len(*sent) != 0 {
+		t.Fatalf("the first esc went to the agent: %v", *sent)
+	}
+	pressFocus(t, m, esc)
+
+	if m.mode != modeList {
+		t.Fatalf("esc esc left mode = %v", m.mode)
+	}
+	if len(*sent) != 0 {
+		t.Fatalf("the pair reached the agent: %v", *sent)
+	}
+	if !m.lastEsc.IsZero() {
+		t.Fatal("leaving focus should drop the held escape")
+	}
+}
+
+// Held, not dropped: an Escape nothing follows is still the agent's, and
+// the timer hands it over once the pair can no longer arrive.
+func TestFocusLoneEscReachesTheAgentWhenItsWindowPasses(t *testing.T) {
+	m, sent := escModel(t)
+
+	if cmd := pressFocus(t, m, tea.KeyMsg{Type: tea.KeyEsc}); cmd == nil {
+		t.Fatal("a held escape should arm its release")
+	}
+	if len(*sent) != 0 {
+		t.Fatalf("the escape was forwarded before its window passed: %v", *sent)
+	}
+
+	updated, _ := m.Update(escFlushMsg{seq: m.escSeq})
+	*m = *updated.(*Model)
+
+	sess := m.sessionRows()[0]
+	want := []string{"send-keys -t " + tmux.SessionName(sess.ID) + " Escape"}
+	if !slices.Equal(*sent, want) {
+		t.Fatalf("pane got %v, want %v", *sent, want)
+	}
+	if m.mode != modeFocus {
+		t.Fatalf("releasing an escape left mode = %v", m.mode)
+	}
+}
+
+// The pane must read the two keys in the order they were typed, so the key
+// that settled the question goes second.
+func TestFocusEscThenAnotherKeyKeepsTheOrder(t *testing.T) {
+	m, sent := escModel(t)
+
+	pressFocus(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	pressFocus(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+
+	sess := m.sessionRows()[0]
+	target := tmux.SessionName(sess.ID)
+	want := []string{"send-keys -t " + target + " Escape", "send-keys -t " + target + " -H 61"}
+	if !slices.Equal(*sent, want) {
+		t.Fatalf("pane got %v, want %v", *sent, want)
+	}
+	if !m.lastEsc.IsZero() {
+		t.Fatal("the escape was released, so nothing should still be held")
+	}
+}
+
+// A timer left over from an Escape already dealt with must not fire a
+// second one at the agent minutes later.
+func TestFocusStaleEscTimerReleasesNothing(t *testing.T) {
+	m, sent := escModel(t)
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+
+	pressFocus(t, m, esc)
+	stale := m.escSeq
+	pressFocus(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	*sent = nil
+
+	// The run this timer was armed for is over, and the one after it is
+	// another Escape's.
+	pressFocus(t, m, esc)
+	updated, _ := m.Update(escFlushMsg{seq: stale})
+	*m = *updated.(*Model)
+
+	if len(*sent) != 0 {
+		t.Fatalf("a stale timer put keys in the pane: %v", *sent)
+	}
+	if m.lastEsc.IsZero() {
+		t.Fatal("a stale timer released the escape that is still held")
+	}
+}
+
 // caretModel is a focused model whose pane mirror is posed by hand: the
 // captured rows, and the caret cell tmux reported over them.
 func caretModel(t *testing.T, cursor paneCursor, rows ...string) *Model {

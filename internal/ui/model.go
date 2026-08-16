@@ -122,10 +122,13 @@ type Model struct {
 	// focusScroll is how many lines the focused pane is scrolled back into
 	// its history; zero is live at the bottom.
 	focusScroll int
-	// lastEsc is when the focused pane last took an Escape, so a second one
-	// close behind it reads as the double-Escape that leaves focus. Zero
-	// means no Escape is open: any other key closes the run.
+	// lastEsc is when a held Escape arrived. The pane has not been given it
+	// yet: a second Escape within the window makes the pair that leaves
+	// focus, and anything else releases it. Zero means nothing is held.
 	lastEsc time.Time
+	// escSeq numbers the holds, so the timer armed for one Escape cannot
+	// release the next.
+	escSeq int
 	// focusOnEnter mirrors the persisted focus-key setting; the footer
 	// reads it every frame, so it lives here instead of the store.
 	focusOnEnter bool
@@ -1216,6 +1219,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cursorOn = !m.cursorOn
 		return m, m.cursorBlink()
+
+	case escFlushMsg:
+		// Nothing followed the Escape, so it was the agent's after all. A
+		// hold that has already been released, or one from a later Escape,
+		// leaves this timer with nothing to do.
+		if m.mode != modeFocus || msg.seq != m.escSeq {
+			return m, nil
+		}
+		if sess, ok := m.selected(); ok {
+			m.flushEsc(sess.ID)
+		} else {
+			m.lastEsc = time.Time{}
+		}
+		return m, nil
 
 	case focusCopiedMsg:
 		m.errBar.text = ""

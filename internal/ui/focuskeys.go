@@ -18,9 +18,19 @@ import (
 var focusNamedKeys = map[tea.KeyType]string{}
 
 // doubleEscWindow is how close two Escapes must fall to read as the pair
-// that leaves focus. Wide enough for a deliberate double tap, short enough
-// that an Escape sent to the agent minutes ago never arms the exit.
+// that leaves focus, and so how long the first one is held back from the
+// pane. Wide enough for a deliberate double tap, short enough that a lone
+// Escape meant for the agent is not visibly late.
 const doubleEscWindow = 500 * time.Millisecond
+
+// escFlushMsg releases an Escape that was held for a pair that never came.
+// seq names the hold it was armed for, so a timer left over from an Escape
+// already dealt with cannot fire a second one at the agent.
+type escFlushMsg struct{ seq int }
+
+func escFlushCmd(seq int) tea.Cmd {
+	return tea.Tick(doubleEscWindow, func(time.Time) tea.Msg { return escFlushMsg{seq: seq} })
+}
 
 func init() {
 	for i := 1; i <= 26; i++ {
@@ -214,21 +224,35 @@ func (m *Model) handleFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.leaveFocus()
 	}
 	// A lone Escape still belongs to the agent - it is how a prompt is
-	// cleared and a turn interrupted - so the first one forwards as usual
-	// and only a second one close behind it leaves focus. The second is
-	// swallowed: the pane already took the interrupt from the first.
+	// cleared and a turn interrupted - so it is held rather than dropped,
+	// and released to the pane once the window for a second one has passed.
+	// Forwarding it immediately would mean the gesture that leaves a
+	// working agent always interrupted it on the way out, which is the one
+	// thing the reader was not asking for.
 	if msg.Type == tea.KeyEsc && !msg.Alt {
 		if !m.lastEsc.IsZero() && time.Since(m.lastEsc) < doubleEscWindow {
+			// The pair: neither Escape reaches the agent, so a turn that was
+			// running is still running when the list comes back.
 			return m, m.leaveFocus()
 		}
+		// A held Escape whose release is late - the timer has not been read
+		// yet - is still the agent's, and goes before this one starts its
+		// own hold.
+		if sess, ok := m.selected(); ok {
+			m.flushEsc(sess.ID)
+		}
 		m.lastEsc = time.Now()
-	} else {
-		m.lastEsc = time.Time{}
+		m.escSeq++
+		return m, escFlushCmd(m.escSeq)
 	}
 	sess, ok := m.selected()
 	if !ok {
 		return m, m.leaveFocus()
 	}
+	// Anything else settles the question early: the Escape was meant for the
+	// agent, and goes first so the pane reads the two keys in the order they
+	// were typed.
+	m.flushEsc(sess.ID)
 	// Ctrl+O opens the session's directory in an editor, matching the
 	// binding a real attach gets. A windowed editor leaves the focus where
 	// it is; one that draws in the terminal takes it back on exit.
@@ -264,16 +288,41 @@ func (m *Model) handleFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, resume
 	}
-	command, ok := focusKeyCommand(tmux.SessionName(sess.ID), msg)
-	if !ok {
-		return m, resume
-	}
-	if m.focus == nil || !m.focus.attempt(command) {
-		// Nothing went over the pipe; one forked send-keys keeps the key
-		// from being swallowed.
-		if err := m.tmux.SendRaw(command); err != nil {
-			m.errBar.text = err.Error()
-		}
-	}
+	m.sendFocusKey(sess.ID, msg)
 	return m, resume
+}
+
+// runPaneCommand puts an assembled send-keys line into the pane, over the
+// watcher's pipe when it has one. It is the seam tests swap to read the
+// keys a focused pane was given instead of putting them into a real one.
+var runPaneCommand = func(m *Model, command string) error {
+	if m.focus != nil && m.focus.attempt(command) {
+		return nil
+	}
+	// Nothing went over the pipe; one forked send-keys keeps the key from
+	// being swallowed.
+	return m.tmux.SendRaw(command)
+}
+
+// sendFocusKey puts one key into a focused session's pane. Keys tmux cannot
+// name are dropped rather than sent as something else.
+func (m *Model) sendFocusKey(sessID string, msg tea.KeyMsg) {
+	command, ok := focusKeyCommand(tmux.SessionName(sessID), msg)
+	if !ok {
+		return
+	}
+	if err := runPaneCommand(m, command); err != nil {
+		m.errBar.text = err.Error()
+	}
+}
+
+// flushEsc releases a held Escape into the pane. Called from the key path
+// when the next key settles what the Escape meant, and from the timer when
+// nothing followed it at all; either way the hold ends here.
+func (m *Model) flushEsc(sessID string) {
+	if m.lastEsc.IsZero() {
+		return
+	}
+	m.lastEsc = time.Time{}
+	m.sendFocusKey(sessID, tea.KeyMsg{Type: tea.KeyEsc})
 }
