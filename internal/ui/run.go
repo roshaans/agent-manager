@@ -2,10 +2,12 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -175,16 +177,26 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 	if fromSession {
 		label = m.unusedName(name + "-" + parent.Name)
 	}
+	// The script's previous run goes before this one starts, so a directory
+	// holds one of each script rather than a pile.
+	//
+	// A run script is a build and a process, and pressing p is asking for the
+	// current one. Left to stack, the old process keeps answering O — a dev
+	// server on the port, a manager built from source that has since moved on
+	// — and the reader ends up reading yesterday's build while believing they
+	// just started today's.
+	replaced := m.retireRunSessions(dir, name)
 	// Probed before the script starts, or its own server is what we find.
 	busy := settings.BlockBusy(portKey(dir))
 	sess := store.Session{
-		ID:       newID(),
-		Name:     label,
-		Tool:     toolName,
-		Cwd:      dir,
-		Group:    m.contextGroup(),
-		Status:   status.Starting,
-		ParentID: parent.ID,
+		ID:        newID(),
+		Name:      label,
+		Tool:      toolName,
+		Cwd:       dir,
+		Group:     m.contextGroup(),
+		Status:    status.Starting,
+		ParentID:  parent.ID,
+		RunScript: name,
 	}
 	if err := m.launchNewSession(sess, tool, run.Command, launchOptions{
 		env: settings.Env(portKey(dir)),
@@ -200,6 +212,11 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 	// which of the worktrees' ports this one got.
 	port := settings.Port(portKey(dir))
 	message := fmt.Sprintf("running %s on :%d · O opens it", name, port)
+	if replaced > 0 {
+		// Named rather than done quietly: a process the reader started is
+		// gone, and a key that ends one has to say so.
+		message = fmt.Sprintf("restarted %s on :%d · O opens it", name, port)
+	}
 	if busy {
 		// Said plainly rather than worked around: a server failing to bind a
 		// port you can see beats one quietly serving somewhere you cannot.
@@ -387,21 +404,71 @@ func (m *Model) openKey() (tea.Model, tea.Cmd) {
 // sessions p creates, newest first, so a script started twice opens the one
 // still meant to be looked at. Directories are compared resolved, since a
 // pane reports its path with symlinks followed and the row may not.
+//
+// A terminal tab is a shell in the same directory and is not this: O opening
+// the shell someone happened to leave sitting there, instead of the server
+// they asked to see, is the reading a run script's own name rules out.
 func (m *Model) runSessionIn(dir string) (store.Session, bool) {
-	want := resolvePath(dir)
 	var found store.Session
-	for _, sess := range m.sessions {
-		if sess.Archived || !m.isShell(sess.Tool) {
-			continue
-		}
-		if resolvePath(sess.Cwd) != want || !m.tmux.Exists(sess.ID) {
-			continue
-		}
+	for _, sess := range m.runSessionsIn(dir, "") {
 		if found.ID == "" || sess.CreatedAt.After(found.CreatedAt) {
 			found = sess
 		}
 	}
 	return found, found.ID != ""
+}
+
+// runSessionsIn is every live session a run script started in a directory,
+// narrowed to one script when named. Directories are compared resolved, since
+// a pane reports its path with symlinks followed and the row may not.
+func (m *Model) runSessionsIn(dir, script string) []store.Session {
+	want := resolvePath(dir)
+	var found []store.Session
+	for _, sess := range m.sessions {
+		if sess.Archived || sess.RunScript == "" || !m.isShell(sess.Tool) {
+			continue
+		}
+		if script != "" && sess.RunScript != script {
+			continue
+		}
+		if resolvePath(sess.Cwd) != want || !m.tmux.Exists(sess.ID) {
+			continue
+		}
+		found = append(found, sess)
+	}
+	return found
+}
+
+// forgetSession drops a deleted row from the list in memory, so the frame
+// drawn before the refresh lands does not still show it.
+func (m *Model) forgetSession(id string) {
+	delete(m.pickedRepos, id)
+	delete(m.awaitedRenames, id)
+	m.sessions = slices.DeleteFunc(m.sessions, func(sess store.Session) bool {
+		return sess.ID == id
+	})
+	m.rebuildRows()
+}
+
+// retireRunSessions ends a script's earlier runs in a directory and drops
+// their rows, reporting how many went. The rows go rather than staying dead
+// and revivable: a run script is started by pressing p, and a list keeping
+// every build anyone ever ran is a list nobody can read.
+func (m *Model) retireRunSessions(dir, script string) int {
+	retired := 0
+	for _, sess := range m.runSessionsIn(dir, script) {
+		if err := m.killSession(sess); err != nil {
+			m.errBar.text = "ending the previous " + script + ": " + err.Error()
+			continue
+		}
+		if err := m.store.Delete(sess.ID); err != nil && !errors.Is(err, store.ErrSessionGone) {
+			m.errBar.text = "clearing the previous " + script + ": " + err.Error()
+			continue
+		}
+		m.forgetSession(sess.ID)
+		retired++
+	}
+	return retired
 }
 
 // resolvePath follows symlinks where it can. A tmux pane reports its

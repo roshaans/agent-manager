@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/project"
+	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -984,4 +985,117 @@ func containsWaveTick(t *testing.T, cmd tea.Cmd) bool {
 		}
 	}
 	return false
+}
+
+// runSessions is every shell a run script started, which is what p is
+// supposed to leave exactly one of per script.
+func runSessions(m *Model, script string) []store.Session {
+	var found []store.Session
+	for _, sess := range m.sessions {
+		if sess.RunScript == script {
+			found = append(found, sess)
+		}
+	}
+	return found
+}
+
+// A run script is a build and a process, and p asks for the current one. Left
+// to stack, the previous process keeps answering O and the reader ends up
+// reading a build that has since moved on.
+func TestRunKeyReplacesTheScriptsPreviousRun(t *testing.T) {
+	m := buildModel(t)
+	dir := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"cat\"\n")
+	onSessionIn(t, m, dir)
+
+	pressRunKey(t, m)
+	first := runSessions(m, "dev")
+	if len(first) != 1 {
+		t.Fatalf("first press left %d dev sessions, want 1", len(first))
+	}
+
+	m.selectSessionRow(t, "agent")
+	pressRunKey(t, m)
+
+	second := runSessions(m, "dev")
+	if len(second) != 1 {
+		t.Fatalf("second press left %d dev sessions, want the old one replaced", len(second))
+	}
+	if second[0].ID == first[0].ID {
+		t.Fatal("the second press reused the first run rather than starting a fresh one")
+	}
+	if m.tmux.Exists(first[0].ID) {
+		t.Fatal("the previous run's pane is still alive")
+	}
+	if !strings.Contains(m.errBar.text, "restarted") {
+		t.Fatalf("status line = %q, want it to say the previous run was replaced", m.errBar.text)
+	}
+}
+
+// Two scripts are two different things to have running, so starting one does
+// not end the other.
+func TestRunKeyLeavesOtherScriptsRunning(t *testing.T) {
+	m := buildModel(t)
+	dir := writeProject(t, t.TempDir(),
+		"[run.dev]\ncommand = \"cat\"\n\n[run.watch]\ncommand = \"cat\"\n")
+	onSessionIn(t, m, dir)
+
+	runNamed(t, m, dir, "dev")
+	runNamed(t, m, dir, "watch")
+
+	if len(runSessions(m, "dev")) != 1 || len(runSessions(m, "watch")) != 1 {
+		t.Fatalf("want one of each script, got dev=%d watch=%d",
+			len(runSessions(m, "dev")), len(runSessions(m, "watch")))
+	}
+}
+
+// The same script in another worktree is another thing entirely, and running
+// one must not stop the other.
+func TestRunKeyLeavesTheSameScriptInAnotherDirectoryAlone(t *testing.T) {
+	m := buildModel(t)
+	here := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"cat\"\n")
+	there := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"cat\"\n")
+	onSessionIn(t, m, here)
+
+	runNamed(t, m, here, "dev")
+	runNamed(t, m, there, "dev")
+
+	if got := len(runSessions(m, "dev")); got != 2 {
+		t.Fatalf("two worktrees running dev left %d sessions, want both", got)
+	}
+}
+
+// A terminal tab is a shell in the same directory and is not a run session:
+// neither p's replacement nor O's attach may touch it.
+func TestRunKeySparesATerminalTab(t *testing.T) {
+	m := buildModel(t)
+	dir := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"cat\"\n")
+	onSessionIn(t, m, dir)
+	m.terminalKey()
+	m.applyCmd(t, m.refreshCmd())
+	tabs := len(runSessions(m, ""))
+
+	m.selectSessionRow(t, "agent")
+	pressRunKey(t, m)
+	m.selectSessionRow(t, "agent")
+	pressRunKey(t, m)
+
+	if got := len(runSessions(m, "")); got != tabs {
+		t.Fatalf("terminal tabs went from %d to %d across two p presses", tabs, got)
+	}
+	if _, ok := m.runSessionIn(dir); !ok {
+		t.Fatal("O should find the run session")
+	}
+	if found, _ := m.runSessionIn(dir); found.RunScript != "dev" {
+		t.Fatalf("O found %+v, want the run script's own session", found)
+	}
+}
+
+func runNamed(t *testing.T, m *Model, dir, script string) {
+	t.Helper()
+	settings, err := project.Load(dir, dir)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	_, cmd := m.startRun(settings, dir, script)
+	m.applyCmd(t, cmd)
 }
