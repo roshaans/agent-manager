@@ -9,6 +9,12 @@ go mod download
 go build ./...
 '''
 
+# The dev instance leaves a binary and its own HOME behind. Both are
+# untracked, and an untracked file is exactly what makes a worktree unclean
+# and blocks git from removing it — so a worktree that ever ran [run.tui]
+# could not be deleted without clearing these by hand first.
+archive = "rm -rf .am-dev .am-dev-home"
+
 # Testing a worktree's build means running this manager inside this manager.
 # HOME is redirected at a directory inside the worktree because config.Dir()
 # resolves under it: without that, a half-finished build would be reading and
@@ -25,6 +31,10 @@ go build -o .am-dev . && HOME="$PWD/.am-dev-home" exec ./.am-dev
 '''
 description = "this manager, built from this worktree, on its own state"
 default = true
+# Started as soon as the worktree finishes setting up, so a new worktree
+# arrives with a dev build already running: O attaches to it. Testing a
+# change is then creating a worktree and pressing one key.
+auto = true
 
 [run.test]
 command = "go test ./..."
