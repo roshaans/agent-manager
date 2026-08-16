@@ -31,12 +31,18 @@ func railRow(rail, needle string) int {
 	return at
 }
 
-// pinShells puts the model on the placement whose block these tests are
-// about. Nesting is the default, so a test of the pinned block has to ask
-// for it rather than inherit it.
+// pinShells and nestShells name the placement a test is about rather than
+// inherit it, so which one is the default is free to change without
+// quietly turning these into tests of something else.
 func pinShells(t *testing.T, m *Model) {
 	t.Helper()
 	m.shellsPinned = true
+	m.rebuildRows()
+}
+
+func nestShells(t *testing.T, m *Model) {
+	t.Helper()
+	m.shellsPinned = false
 	m.rebuildRows()
 }
 
@@ -204,6 +210,7 @@ func TestShellNestsUnderTheSessionItWasOpenedOn(t *testing.T) {
 	createSession(t, m, "agent-one", t.TempDir(), "backend")
 	m.selectSessionRow(t, "agent-one")
 	shell := spawnTerminal(t, m)
+	nestShells(t, m)
 
 	agent := rowFor(t, m, m.shellParents[shell.ID])
 	if agent.sess.Name != "agent-one" {
@@ -233,6 +240,7 @@ func TestSecondShellJoinsTheFirstRatherThanNesting(t *testing.T) {
 	m.selectSessionRow(t, "agent-one")
 	first := spawnTerminal(t, m)
 	second := spawnTerminal(t, m)
+	nestShells(t, m)
 
 	if m.shellParents[second.ID] != m.shellParents[first.ID] {
 		t.Fatalf("second shell hangs off %q, want the first's parent %q",
@@ -262,7 +270,7 @@ func TestShellWithoutALinkNestsByDirectory(t *testing.T) {
 			m.sessions[i].Cwd = dir
 		}
 	}
-	m.rebuildRows()
+	nestShells(t, m)
 
 	agent := rowFor(t, m, m.shellParents[shell.ID])
 	if agent.sess.Name != "agent-one" {
@@ -282,6 +290,7 @@ func TestNestedShellLeavesTheColumnToItsSession(t *testing.T) {
 
 	m.selectGroupRow(t, "backend")
 	loose := spawnTerminal(t, m)
+	nestShells(t, m)
 
 	if label := m.shellOriginLabel(nested); label != "" {
 		t.Fatalf("label = %q, want nothing where the session is the row above", label)
@@ -553,7 +562,7 @@ func TestTerminalPlacementPersists(t *testing.T) {
 	spawnTerminal(t, m)
 
 	m.openSettings()
-	if body := ansi.Strip(m.viewSettings()); !strings.Contains(body, "terminal rows") || !strings.Contains(body, "nested") {
+	if body := ansi.Strip(m.viewSettings()); !strings.Contains(body, "terminal rows") || !strings.Contains(body, "pinned") {
 		t.Fatalf("settings should offer the placement row on its default:\n%s", body)
 	}
 	for m.settings.field != settingsFieldTerminals {
@@ -562,80 +571,28 @@ func TestTerminalPlacementPersists(t *testing.T) {
 	m.handleSettingsKey(tea.KeyMsg{Type: tea.KeyRight})
 	m.handleSettingsKey(tea.KeyMsg{Type: tea.KeyEnter})
 
-	if chosen, err := m.store.Setting(terminalPlacementSetting); err != nil || chosen != "pinned" {
-		t.Fatalf("stored placement = %q err %v, want pinned", chosen, err)
+	if chosen, err := m.store.Setting(terminalPlacementSetting); err != nil || chosen != "inline" {
+		t.Fatalf("stored placement = %q err %v, want inline", chosen, err)
 	}
-	if !storedShellsPinned(m.store) {
-		t.Fatal("a fresh model should read the stored choice back as pinned")
+	if storedShellsPinned(m.store) {
+		t.Fatal("a fresh model should read the stored choice back as nested")
 	}
-	if !m.shellsPinned {
+	if m.shellsPinned {
 		t.Fatal("the model should mirror the stored choice")
 	}
-	if m.pinnedShells != 1 {
+	if m.pinnedShells != 0 {
 		t.Fatalf("pinnedShells = %d, want the rail rebuilt on close", m.pinnedShells)
 	}
 }
 
-// seedUnsweptPlacement puts a store back the way an upgrade finds one: a
-// stored placement, and no marker saying it has been looked at.
-func seedUnsweptPlacement(t *testing.T, m *Model, placement string) {
-	t.Helper()
-	if err := m.store.SetSetting(terminalPlacementSetting, placement); err != nil {
-		t.Fatalf("seed placement: %v", err)
-	}
-	if err := m.store.SetSetting(terminalPlacementSweptSetting, ""); err != nil {
-		t.Fatalf("clear sweep marker: %v", err)
-	}
-}
-
-// Nesting is what a fresh install gets: it is the one placement that says
-// which worktree a terminal belongs to without having to be read.
-func TestNestingIsTheDefaultPlacement(t *testing.T) {
+// The pinned block stays what an install gets without choosing; nesting is
+// the opt-in, so an upgrade never rearranges a list under its reader.
+func TestPinnedIsTheDefaultPlacement(t *testing.T) {
 	m := buildModel(t)
-	if m.shellsPinned {
-		t.Fatal("a model with no stored choice should nest its shells")
+	if !m.shellsPinned {
+		t.Fatal("a model with no stored choice should pin its shells")
 	}
-	if storedShellsPinned(m.store) {
-		t.Fatal("an unset placement reads as nested")
-	}
-}
-
-// Every install predating nesting carries a "pinned" the old settings save
-// wrote for it, which would leave the new default reaching nobody. It is
-// cleared once — and only once, so a pinned chosen afterwards is kept.
-func TestIncidentalPinnedIsSweptOnce(t *testing.T) {
-	m := buildModel(t)
-	// New() sweeps on boot, so the install has to be put back the way an
-	// upgrade finds one: a placement written for it, and no marker.
-	seedUnsweptPlacement(t, m, "pinned")
-
-	sweepIncidentalPlacement(m.store)
-	if storedShellsPinned(m.store) {
-		t.Fatal("a pinned nobody chose should be swept back to the default")
-	}
-
-	// A later choice is a real one, and the sweep is spent.
-	if err := m.store.SetSetting(terminalPlacementSetting, "pinned"); err != nil {
-		t.Fatalf("choose placement: %v", err)
-	}
-	sweepIncidentalPlacement(m.store)
 	if !storedShellsPinned(m.store) {
-		t.Fatal("a pinned chosen after the sweep must survive")
-	}
-}
-
-// A fresh install has nothing to sweep, and must not be left reading as
-// though it had chosen anything.
-func TestSweepLeavesAFreshInstallAlone(t *testing.T) {
-	m := buildModel(t)
-	seedUnsweptPlacement(t, m, "")
-	sweepIncidentalPlacement(m.store)
-
-	if storedShellsPinned(m.store) {
-		t.Fatal("the sweep should leave an unset placement nested")
-	}
-	chosen, err := m.store.Setting(terminalPlacementSetting)
-	if err != nil || chosen != "" {
-		t.Fatalf("placement = %q err %v, want it still unset", chosen, err)
+		t.Fatal("an unset placement reads as pinned")
 	}
 }
