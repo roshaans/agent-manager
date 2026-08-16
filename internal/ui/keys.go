@@ -60,6 +60,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleRulesPickKey(msg)
 	case modeRulesView:
 		return m.handleRulesViewKey(msg)
+	case modePRPick:
+		return m.handlePRPickKey(msg)
 	case modeGroupForm:
 		return m.handleGroupFormKey(msg)
 	case modeDiff:
