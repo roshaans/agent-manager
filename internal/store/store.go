@@ -54,7 +54,12 @@ type Session struct {
 	// for every session a human named. It is what tells one worktree's dev
 	// build apart from a terminal tab opened in the same directory, so p can
 	// replace the script's own session without touching anything else.
-	RunScript           string
+	RunScript string
+	// PRURL is the pull request this session produced, once something has
+	// established which one that is. It is recorded rather than re-derived
+	// because no git fact ties a session to a pull request: an agent that
+	// pushes a branch it never checked out leaves nothing behind to match on.
+	PRURL               string
 	PendingInputs       []string
 	PendingInputClaimed bool
 }
@@ -155,6 +160,7 @@ CREATE TABLE IF NOT EXISTS settings (
 		`ALTER TABLE sessions ADD COLUMN pending_claimed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions ADD COLUMN run_script TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, migration := range migrations {
 		if _, err := s.db.Exec(migration); err != nil {
@@ -334,7 +340,7 @@ func (s *Store) AddGroup(name, path, worktree string) error {
 }
 
 func (s *Store) ListSessions(includeArchived bool) ([]Session, error) {
-	query := `SELECT id, name, tool, cwd, group_name, status, archived, acked, created_at, last_status_at, agent_session_id, worktree_repo, worktree_branch, parent_id, agent_launched_at, retired_agent_session_id, pending_inputs, pending_claimed, run_script
+	query := `SELECT id, name, tool, cwd, group_name, status, archived, acked, created_at, last_status_at, agent_session_id, worktree_repo, worktree_branch, parent_id, agent_launched_at, retired_agent_session_id, pending_inputs, pending_claimed, run_script, pr_url
 	          FROM sessions`
 	if !includeArchived {
 		query += ` WHERE archived = 0`
@@ -355,7 +361,7 @@ func (s *Store) ListSessions(includeArchived bool) ([]Session, error) {
 		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Tool, &sess.Cwd,
 			&sess.Group, &sess.Status, &archived, &acked, &created, &lastStatus,
 			&sess.AgentSessionID, &sess.WorktreeRepo, &sess.WorktreeBranch, &sess.ParentID,
-			&agentLaunched, &sess.RetiredAgentSessionID, &pendingInputs, &pendingClaimed, &sess.RunScript); err != nil {
+			&agentLaunched, &sess.RetiredAgentSessionID, &pendingInputs, &pendingClaimed, &sess.RunScript, &sess.PRURL); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(pendingInputs), &sess.PendingInputs); err != nil {
@@ -378,11 +384,11 @@ func (s *Store) Get(id string) (Session, error) {
 	var created, lastStatus, agentLaunched int64
 	var pendingInputs string
 	err := s.db.QueryRow(
-		`SELECT id, name, tool, cwd, group_name, status, archived, acked, created_at, last_status_at, agent_session_id, worktree_repo, worktree_branch, parent_id, agent_launched_at, retired_agent_session_id, pending_inputs, pending_claimed, run_script
+		`SELECT id, name, tool, cwd, group_name, status, archived, acked, created_at, last_status_at, agent_session_id, worktree_repo, worktree_branch, parent_id, agent_launched_at, retired_agent_session_id, pending_inputs, pending_claimed, run_script, pr_url
 		 FROM sessions WHERE id = ?`, id,
 	).Scan(&sess.ID, &sess.Name, &sess.Tool, &sess.Cwd, &sess.Group,
 		&sess.Status, &archived, &acked, &created, &lastStatus, &sess.AgentSessionID,
-		&sess.WorktreeRepo, &sess.WorktreeBranch, &sess.ParentID, &agentLaunched, &sess.RetiredAgentSessionID, &pendingInputs, &pendingClaimed, &sess.RunScript)
+		&sess.WorktreeRepo, &sess.WorktreeBranch, &sess.ParentID, &agentLaunched, &sess.RetiredAgentSessionID, &pendingInputs, &pendingClaimed, &sess.RunScript, &sess.PRURL)
 	if err != nil {
 		return Session{}, err
 	}
@@ -515,6 +521,17 @@ func (s *Store) SetAcked(id string, acked bool) error {
 // session, so a later revive resumes that exact conversation. Used both
 // when launching a tool we assign the id to and when capturing the id a
 // tool minted itself.
+// SetSessionPR records which pull request a session produced. An empty URL
+// clears it, for a session whose pull request turned out to be somebody
+// else's or was linked by mistake.
+func (s *Store) SetSessionPR(id, url string) error {
+	res, err := s.db.Exec(`UPDATE sessions SET pr_url = ? WHERE id = ?`, url, id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res, id)
+}
+
 func (s *Store) SetAgentSessionID(id, agentSessionID string) error {
 	res, err := s.db.Exec(
 		`UPDATE sessions SET agent_session_id = ? WHERE id = ?`, agentSessionID, id)

@@ -483,6 +483,20 @@ func (d *Driver) CapturePane(id string) (string, error) {
 	return d.run("capture-pane", "-p", "-e", "-t", sessionName(id))
 }
 
+// CaptureHistory returns the pane's scrollback as plain text, up to lines
+// back from the top of the screen. Escapes are left out (no -e): callers read
+// this to find things an agent printed, and colour would only get in the way
+// of the match.
+//
+// A pane holding less history than asked for answers with what it has, so the
+// count is a ceiling rather than a requirement.
+func (d *Driver) CaptureHistory(id string, lines int) (string, error) {
+	if lines <= 0 {
+		return "", nil
+	}
+	return d.run("capture-pane", "-p", "-J", "-S", "-"+strconv.Itoa(lines), "-t", sessionName(id))
+}
+
 // Resize pins a detached session's window to the given dimensions so its
 // preview capture fits the manager's preview panel. resize-window forces
 // window-size to manual, which is what keeps the detached window fixed;

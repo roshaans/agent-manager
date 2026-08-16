@@ -546,6 +546,9 @@ func (m *Model) renderSessionEntry(entry treeRow, selected bool, width int, pad,
 		nameStyle = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 	}
 	head := pad + guides + dot + " " + nameStyle.Render(m.displayName(sess))
+	if chip := m.prChip(sess); chip != "" {
+		head += " " + chip
+	}
 	focused := selected && m.mode == modeFocus
 	if focused {
 		head += " " + focusBadgeStyle.Render(" FOCUS ")
@@ -883,9 +886,16 @@ func (m *Model) viewDetail(width int) string {
 	// and the tool chip goes before the name does.
 	name := lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render(m.displayName(sess))
 	withTool := name + "  " + chipStyle.Render(tool)
-	heads := []string{withTool, name}
+	// The pull request outlives the branch as the head narrows: a reader who
+	// has both wants the number, and the branch is the half they can also
+	// read off the row they came from.
+	withPR := withTool
+	if chip := m.prChip(sess); chip != "" {
+		withPR = withTool + " " + chip
+	}
+	heads := []string{withPR, withTool, name}
 	if sess.WorktreeBranch != "" {
-		heads = append([]string{withTool + " " + chipStyle.Render("⑂ "+sess.WorktreeBranch)}, heads...)
+		heads = append([]string{withPR + " " + chipStyle.Render("⑂ "+sess.WorktreeBranch)}, heads...)
 	}
 
 	usage := ""

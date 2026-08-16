@@ -1093,3 +1093,48 @@ func TestMoveGroupSameParentIsNoop(t *testing.T) {
 		t.Fatalf("MoveGroup: %v", err)
 	}
 }
+
+// The link between a session and the pull request it produced is the one
+// half of this that no lookup can re-derive, so it has to survive a restart.
+func TestSessionPRRoundTrips(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.CreateSession(sample("a", "g1")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	url := "https://github.com/me/fork/pull/2"
+
+	if err := st.SetSessionPR("a", url); err != nil {
+		t.Fatalf("SetSessionPR: %v", err)
+	}
+
+	sess, err := st.Get("a")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if sess.PRURL != url {
+		t.Fatalf("PRURL = %q, want %q", sess.PRURL, url)
+	}
+	listed, err := st.ListSessions(false)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if listed[0].PRURL != url {
+		t.Fatalf("listed PRURL = %q, want %q", listed[0].PRURL, url)
+	}
+
+	// A link set by mistake has to be removable, and clearing must not read
+	// as a session that vanished.
+	if err := st.SetSessionPR("a", ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if sess, _ := st.Get("a"); sess.PRURL != "" {
+		t.Fatalf("PRURL = %q after clearing", sess.PRURL)
+	}
+}
+
+func TestSessionPROnAGoneSession(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.SetSessionPR("nobody", "https://x/y/z/pull/1"); !errors.Is(err, ErrSessionGone) {
+		t.Fatalf("SetSessionPR on a missing session = %v, want ErrSessionGone", err)
+	}
+}

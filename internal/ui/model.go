@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"hash/fnv"
 	"sort"
 	"strings"
@@ -56,6 +57,9 @@ const (
 	// governed by, and modeRulesView shows one of them.
 	modeRulesPick
 	modeRulesView
+	// modePRPick lists the open pull requests on a branch that has more than
+	// one, on a P that cannot pick for the reader.
+	modePRPick
 )
 
 type treeRow struct {
@@ -181,6 +185,7 @@ type Model struct {
 	runPick     runPickState
 	runInit     runInitState
 	rules       rulesState
+	prPick      prPickState
 	// editorReturnID is the session an editor request detached from, so the
 	// attach it cost can be resumed once the editor is up.
 	editorReturnID string
@@ -188,6 +193,13 @@ type Model struct {
 	// Repo a human picked by hand per session, outranking the agent's
 	// declaration for as long as this manager runs.
 	pickedRepos map[string]string
+
+	// prs is each session's pull requests, keyed by session ID and replaced
+	// whole by every scan. The titles and states in it are a view of GitHub
+	// rather than of this manager's own state, so they are not persisted: a
+	// badge left over from last week would be a claim nobody checked. Which
+	// pull request belongs to which session is persisted, on the session.
+	prs map[string][]pullRequest
 
 	// awaitedRenames holds the generated name a spawned session launched
 	// under, for as long as the agent it carries the rename directive to is
@@ -714,7 +726,7 @@ func (m *Model) requestRefresh() {
 
 func (m *Model) Init() tea.Cmd {
 	m.syncPollInput()
-	return tea.Batch(m.syncPaneTheme(), m.refreshExistingSessionUX, m.checkForUpdate, m.checkFeed, m.updateTick(), m.bannerTick(), m.previewTick(), m.sweepPastes, m.pasteSweepTick())
+	return tea.Batch(m.syncPaneTheme(), m.refreshExistingSessionUX, m.checkForUpdate, m.checkFeed, m.updateTick(), m.bannerTick(), m.previewTick(), m.sweepPastes, m.pasteSweepTick(), m.prScanSoon())
 }
 
 // updateMsg carries the result of a GitHub release check. A failed check may
@@ -1079,10 +1091,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case prLinkMsg:
-		// The URL, not "opening the pull request": it is what says which of
-		// the two answers came back, and which repository it came back for.
-		m.reportDone("opening " + msg.target)
-		return m, openLink(msg.target)
+		return m.resolvePRLink(msg)
+
+	case prScanTickMsg:
+		return m, tea.Batch(m.prScanCmd(), m.prScanTick())
+
+	case prScanMsg:
+		m.prs = msg.prs
+		// A link is written back so it survives the manager quitting: what a
+		// session printed scrolls out of its pane long before the work it
+		// names is finished with.
+		for sessID, prURL := range msg.links {
+			if err := m.store.SetSessionPR(sessID, prURL); err != nil && !errors.Is(err, store.ErrSessionGone) {
+				m.errBar.text = "recording the pull request: " + err.Error()
+			}
+		}
+		if len(msg.links) > 0 {
+			m.requestRefresh()
+		}
+		return m, nil
 
 	case previewTickMsg:
 		m.startupPhase++
