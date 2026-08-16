@@ -17,6 +17,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `p` | Run a project script from `.agent-manager/settings.toml` in the row's directory, or offer to create the file when the project has none ([Project settings](project-settings.md)) |
 | `o` | Open the selected row's directory in your editor |
 | `O` | Show what this worktree is running: its server in a browser, or a TUI run session's pane |
+| `P` | Open the row's branch on its remote: the pull request when the branch has one, and the repository's own page when it does not. Needs [`gh`](https://cli.github.com) to find the pull request; without it the repository page is what opens |
 | `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
 | `Y` | Copy the selected row's directory to the clipboard: a session's checkout — its worktree, when it has one — or a group's default path |
 | `i` | The rules the selected session runs under: the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` its tool reads, read in place or opened in your editor ([Agent rules](#agent-rules)) |
