@@ -1286,6 +1286,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.copied = msg.chars
 		return m, nil
 
+	case pathCopiedMsg:
+		if msg.err != nil {
+			m.errBar.text = "could not copy the path: " + msg.err.Error()
+			return m, nil
+		}
+		// The path itself, not a count: what was copied is the whole point,
+		// and it is what tells the reader they picked the row they meant.
+		m.reportDone("copied " + msg.path)
+		return m, nil
+
 	case focusScrollMsg:
 		sess, ok := m.selected()
 		if !ok || sess.ID != msg.sessID {

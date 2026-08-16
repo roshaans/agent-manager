@@ -18,6 +18,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `o` | Open the selected row's directory in your editor |
 | `O` | Show what this worktree is running: its server in a browser, or a TUI run session's pane |
 | `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
+| `Y` | Copy the selected row's directory to the clipboard: a session's checkout — its worktree, when it has one — or a group's default path |
 | `f` | Fork the selected conversation into a named session in the same group and directory |
 | `g` | New group (name, parent, default path) |
 | `enter` | Focus session in place (keys go to the agent, list stays) / fold group |
