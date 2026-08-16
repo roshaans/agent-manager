@@ -704,6 +704,9 @@ func TestSessionRunningReadsThePaneCommand(t *testing.T) {
 		{"zsh", false}, {"bash", false}, {"-zsh", false}, {"fish", false},
 		{"", false},
 	} {
+		// Both signals are controlled: the tree size is the other half, and
+		// a poll may already have filled it.
+		m.paneProcs = map[string]int{run.ID: 1}
 		m.paneCommands = map[string]string{run.ID: tc.command}
 		if got := m.sessionRunning(run); got != tc.running {
 			t.Errorf("pane command %q: running = %v, want %v", tc.command, got, tc.running)
@@ -719,6 +722,7 @@ func TestSessionRunningIgnoresAgents(t *testing.T) {
 	m.selectSessionRow(t, "agent")
 	sess, _ := m.selected()
 
+	m.paneProcs = map[string]int{sess.ID: 5}
 	m.paneCommands = map[string]string{sess.ID: "node"}
 	if m.sessionRunning(sess) {
 		t.Fatal("an agent session should never drive the run indicator")
@@ -734,6 +738,7 @@ func TestWaveTickOnlyExistsWhileSomethingRuns(t *testing.T) {
 	pressRunKey(t, m)
 	run, _ := m.selected()
 
+	m.paneProcs = map[string]int{run.ID: 1}
 	m.paneCommands = map[string]string{run.ID: "zsh"}
 	if cmd := m.waveTick(); cmd != nil {
 		t.Fatal("a manager with nothing running scheduled a tick")
@@ -872,5 +877,56 @@ func TestArchiveWithoutAScriptDoesNothing(t *testing.T) {
 	m.archiveWorktree(worktree, worktree)
 	if m.errBar.text != "" {
 		t.Fatalf("reported %q for a project with no archive script", m.errBar.text)
+	}
+}
+
+// End to end: a run script executing something real must reach the row as a
+// wave, through the poller rather than a hand-set map.
+func TestRunIndicatorAppearsThroughAPoll(t *testing.T) {
+	m := buildModel(t)
+	dir := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"sleep 30\"\n")
+	onSessionIn(t, m, dir)
+	pressRunKey(t, m)
+	run, ok := m.selected()
+	if !ok {
+		t.Fatal("no run session")
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		m.applyCmd(t, m.refreshCmd())
+		if m.paneCommands[run.ID] != "" && m.sessionRunning(run) {
+			glyph := ansi.Strip(m.sessionGlyph(run))
+			for _, frame := range waveFrames {
+				if glyph == string(frame) {
+					return
+				}
+			}
+			t.Fatalf("running session rendered %q, not a wave frame", glyph)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("pane command never arrived: paneCommands=%v", m.paneCommands)
+}
+
+// The signal that matters on macOS: tmux names the pane's own process, so a
+// command run without exec is invisible to pane_current_command and only the
+// process tree shows it.
+func TestSessionRunningSeesACommandTmuxCannotName(t *testing.T) {
+	m := buildModel(t)
+	dir := writeProject(t, t.TempDir(), "[run.dev]\ncommand = \"cat\"\n")
+	onSessionIn(t, m, dir)
+	pressRunKey(t, m)
+	run, _ := m.selected()
+
+	// What a non-exec'd command looks like: the pane still names the shell.
+	m.paneCommands = map[string]string{run.ID: "bash"}
+	m.paneProcs = map[string]int{run.ID: 2}
+	if !m.sessionRunning(run) {
+		t.Fatal("a command running under the shell went unnoticed")
+	}
+	m.paneProcs = map[string]int{run.ID: 1}
+	if m.sessionRunning(run) {
+		t.Fatal("a shell alone should not read as running")
 	}
 }

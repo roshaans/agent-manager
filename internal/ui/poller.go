@@ -226,6 +226,7 @@ func (p *poller) refreshOnce() tea.Msg {
 	var agents agentStats
 	var cpuSecDelta float64
 	paneHashes := make(map[string]uint64, len(sessions))
+	paneProcs := make(map[string]int, len(panes))
 	for i, sess := range sessions {
 		if sess.Archived {
 			continue
@@ -246,6 +247,9 @@ func (p *poller) refreshOnce() tea.Msg {
 		if pane := panes[sess.ID]; pane.PID > 0 {
 			pid := pane.PID
 			stat := trees[pid]
+			// A pane's own shell is one process; anything above that is the
+			// command it is running.
+			paneProcs[sess.ID] = stat.Procs
 			if stat.OK {
 				nextTreeCPU[pid] = stat.CPUSeconds
 				agents.count++
@@ -372,6 +376,7 @@ func (p *poller) refreshOnce() tea.Msg {
 		preview:        preview,
 		agents:         agents,
 		paneCommands:   paneCommands(panes),
+		paneProcs:      paneProcs,
 	}
 	if sampleStats {
 		msg.snap = sysstat.Sample("/")

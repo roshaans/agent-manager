@@ -218,6 +218,7 @@ type Model struct {
 	// paneCommands is each session's foreground command as of the last poll,
 	// which is how a shell running something is told from one at a prompt.
 	paneCommands map[string]string
+	paneProcs    map[string]int
 	// wavePhase advances the run indicator on rows whose script is still
 	// going, and waving marks the tick as already scheduled so a poll cannot
 	// start a second one racing the first.
@@ -456,6 +457,11 @@ type refreshMsg struct {
 	// paneCommands is each session's foreground command, carried on the poll
 	// that already asked tmux for it rather than costing a second call.
 	paneCommands map[string]string
+	// paneProcs is how many processes each session's pane tree holds. A
+	// shell alone is one; more than that is a command running under it,
+	// which is the signal pane_current_command cannot give on macOS, where
+	// tmux reports the pane's own process rather than its foreground child.
+	paneProcs map[string]int
 }
 
 type previewMsg struct {
@@ -1100,6 +1106,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.sessions = msg.sessions
 		m.paneCommands = msg.paneCommands
+		m.paneProcs = msg.paneProcs
 		// A run script that started or ended between polls decides whether
 		// the indicator needs a tick at all.
 		wave := tea.Cmd(nil)

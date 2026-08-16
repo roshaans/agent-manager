@@ -539,11 +539,17 @@ func (m *Model) sessionRunning(sess store.Session) bool {
 	if !m.isShell(sess.Tool) {
 		return false
 	}
-	command := m.paneCommands[sess.ID]
-	if command == "" {
-		return false
+	// Two signals, because neither alone is enough. A command the shell
+	// exec'd replaces the pane's process, so tmux names it and the tree is
+	// still one process. A command run without exec stays a child, so the
+	// pane still names the shell and only the tree size shows it. macOS
+	// reports the pane's own process rather than its foreground child, so
+	// on that platform the tree is the only signal for the common case.
+	if m.paneProcs[sess.ID] > 1 {
+		return true
 	}
-	return !isShellCommand(command)
+	command := m.paneCommands[sess.ID]
+	return command != "" && !isShellCommand(command)
 }
 
 // isShellCommand recognizes a pane resting at a prompt. Matched by name
