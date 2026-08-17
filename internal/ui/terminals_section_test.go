@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/YoanWai/agent-manager/internal/status"
+	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -70,11 +71,29 @@ func TestTerminalsBlockPinsShells(t *testing.T) {
 	}
 }
 
+// restShell settles a shell that was spawned a moment ago. Sourcing its
+// own startup files leaves a child in the pane's process tree, and the
+// size of that tree is what says the shell is running something — on
+// macOS it is the only such signal — so on a loaded machine a real shell
+// reads as busy for as long as its boot takes. These tests are about
+// which glyph a shell at rest wears, so rest is given to them rather than
+// waited out; the tree heuristic has its own tests in run_test.go.
+func restShell(m *Model, sess store.Session) {
+	if m.paneProcs == nil {
+		m.paneProcs = map[string]int{}
+	}
+	if m.paneCommands == nil {
+		m.paneCommands = map[string]string{}
+	}
+	m.paneProcs[sess.ID] = 1
+	m.paneCommands[sess.ID] = "sh"
+}
+
 // The caret marks a shell only where it shares the list with agents.
 func TestShellGlyphIsInlineOnly(t *testing.T) {
 	m := buildModel(t)
 	m.applyCmd(t, m.refreshCmd())
-	spawnTerminal(t, m)
+	restShell(m, spawnTerminal(t, m))
 	pinShells(t, m)
 
 	if rail := m.rail(); strings.Contains(rail, shellGlyph) {
@@ -94,6 +113,7 @@ func TestDeadInlineShellKeepsItsStatusGlyph(t *testing.T) {
 	m.shellsPinned = false
 	m.applyCmd(t, m.refreshCmd())
 	shell := spawnTerminal(t, m)
+	restShell(m, shell)
 
 	if glyph := ansi.Strip(m.sessionGlyph(shell)); glyph != shellGlyph {
 		t.Fatalf("a resting inline shell wears the caret, got %q", glyph)
