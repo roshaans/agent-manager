@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+
 	"github.com/YoanWai/agent-manager/internal/config"
 	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/store"
@@ -47,10 +49,15 @@ func (m *Model) launchNewSession(sess store.Session, tool config.Tool, baseComma
 }
 
 // noteWarnings puts what went wrong beside a session that was still created
-// on the status bar. Only the first: the bar is one line, and a caller that
-// reads it is about to be told about the session that did come up.
+// on the status bar. The bar is one line, so the first warning speaks for the
+// rest — counted, not dropped, so two problems never read as one.
 func (m *Model) noteWarnings(warnings []string) {
-	if len(warnings) > 0 {
-		m.errBar.text = warnings[0]
+	if len(warnings) == 0 {
+		return
 	}
+	text := warnings[0]
+	if len(warnings) > 1 {
+		text += fmt.Sprintf(" (+%d more)", len(warnings)-1)
+	}
+	m.errBar.text = text
 }

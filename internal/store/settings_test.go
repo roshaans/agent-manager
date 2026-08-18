@@ -1,9 +1,6 @@
 package store
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestParseFormatHiddenTools(t *testing.T) {
 	if got := ParseHiddenTools(""); got != nil {
@@ -48,22 +45,5 @@ func TestWorktreeDefaultWalksToNearestChoice(t *testing.T) {
 		if got := WorktreeDefault(choices, tc.path, tc.fallback); got != tc.want {
 			t.Errorf("WorktreeDefault(%q, fallback=%v) = %v want %v", tc.path, tc.fallback, got, tc.want)
 		}
-	}
-}
-
-// The database is opened by more than one process, so a writer that meets
-// another mid-write has to wait rather than fail on the spot.
-func TestOpenSetsABusyTimeout(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer st.Close()
-	var timeout int
-	if err := st.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
-		t.Fatalf("read busy_timeout: %v", err)
-	}
-	if timeout <= 0 {
-		t.Fatalf("busy_timeout = %d, want a wait", timeout)
 	}
 }

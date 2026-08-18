@@ -75,22 +75,20 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// The database is opened by more than one process: the session-scoped
+	// commands an agent runs write while the manager's poller writes. WAL
+	// (persistent, set below) lets them read concurrently and still admits
+	// one writer at a time, and the driver installs no busy handler, so
+	// without a busy timeout a collision fails immediately instead of
+	// waiting the moment out. It rides the DSN rather than a one-shot Exec
+	// because the pragma is per-connection: a connection the pool recycles
+	// would come back without it.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, err
-	}
-	// The single connection serializes this process against itself, but the
-	// database is opened by more than one: the session-scoped commands an
-	// agent runs are their own process writing while the manager's poller
-	// writes. WAL lets them read concurrently and still admits one writer at
-	// a time, and the driver installs no busy handler, so without this a
-	// collision fails immediately instead of waiting the moment out.
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
 		return nil, err
 	}

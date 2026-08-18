@@ -37,7 +37,7 @@ type createSessionArgs struct {
 	Name      string  `json:"name,omitempty" jsonschema:"short kebab-case name; omit to let the new session name itself from its work"`
 	Tool      string  `json:"tool,omitempty" jsonschema:"agent CLI to launch, such as claude or codex; defaults to the manager's configured default"`
 	Group     *string `json:"group,omitempty" jsonschema:"existing group path for the new session; pass an empty string for the root group; defaults to this agent's group"`
-	Directory string  `json:"directory,omitempty" jsonschema:"existing directory to work in; defaults to the selected group's inherited path, then this agent's current directory"`
+	Directory string  `json:"directory,omitempty" jsonschema:"existing directory to work in; defaults to this agent's current directory, or to the group's inherited path when group is passed"`
 	Worktree  *bool   `json:"worktree,omitempty" jsonschema:"give the session its own git worktree and branch so its edits cannot collide with yours; defaults to the target group's setting"`
 }
 
@@ -45,7 +45,7 @@ type listTerminalsArgs struct{}
 
 type createTerminalArgs struct {
 	Group     *string `json:"group,omitempty" jsonschema:"existing group path for the new terminal; pass an empty string for the root group; defaults to this agent's group"`
-	Directory string  `json:"directory,omitempty" jsonschema:"existing directory to open; defaults to the selected group's inherited path, then this agent's current directory"`
+	Directory string  `json:"directory,omitempty" jsonschema:"existing directory to open; defaults to this agent's current directory, or to the group's inherited path when group is passed"`
 }
 
 type sendTerminalArgs struct {
@@ -262,6 +262,11 @@ func formatSession(session sessioncmd.Session) string {
 		session.Tool, session.Name, session.ID, group, session.Directory)
 	if session.Branch != "" {
 		line += " on branch " + session.Branch
+	}
+	for _, run := range session.AutoRuns {
+		// Each holds a port and a process the caller would otherwise
+		// rediscover by starting its own.
+		line += "\nstarted " + run.Name + " (" + run.ID + ") beside it"
 	}
 	if len(session.Warnings) > 0 {
 		// The session is running; these are what it survived, and a caller

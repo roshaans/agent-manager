@@ -148,6 +148,9 @@ func (m *Model) quickSpawn(group, prompt string) (tea.Model, tea.Cmd) {
 		m.errBar.text = "group has no valid default path: " + dir
 		return m, nil
 	}
+	// Cleared before the spawn, not after: a warning the spawn leaves on the
+	// bar — an auto-run that did not start — has to survive the success path.
+	m.errBar.text = ""
 	// No name: a session spawned from one line of prompt has nothing to be
 	// called yet, so it is asked to name itself once it knows.
 	if err := m.spawnSession(spawn.Options{
@@ -169,7 +172,6 @@ func (m *Model) quickSpawn(group, prompt string) (tea.Model, tea.Cmd) {
 	// Spawned sessions start outside the attention set; clear so the new row shows.
 	m.statusFilter = statusFilterAll
 	m.clearQuickAfterSend()
-	m.errBar.text = ""
 	return m, m.refreshCmd()
 }
 

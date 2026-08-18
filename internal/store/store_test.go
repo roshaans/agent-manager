@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -1091,5 +1092,33 @@ func TestMoveGroupSameParentIsNoop(t *testing.T) {
 	}
 	if err := st.MoveGroup("alpha/inner", "alpha"); err != nil {
 		t.Fatalf("MoveGroup: %v", err)
+	}
+}
+
+// The database is opened by more than one process, so a writer that meets
+// another mid-write has to wait rather than fail on the spot. The timeout
+// rides the DSN, so it has to survive a path with a space in it — the real
+// config dir lives under "Application Support".
+func TestOpenSetsABusyTimeout(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "spaced dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	var timeout int
+	if err := st.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("read busy_timeout: %v", err)
+	}
+	if timeout <= 0 {
+		t.Fatalf("busy_timeout = %d, want a wait", timeout)
+	}
+	// WAL still has to have been applied on top of the DSN pragma.
+	var mode string
+	if err := st.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+		t.Fatalf("journal_mode = %q, %v", mode, err)
 	}
 }

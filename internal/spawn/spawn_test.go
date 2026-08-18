@@ -402,3 +402,25 @@ func TestLaunchEnvDoesNotLetAProjectOverrideTheHookWiring(t *testing.T) {
 		t.Fatalf("the project's own variables should still reach the pane:\n%s", body)
 	}
 }
+
+// A caller that already lives in a linked worktree is exactly who asks for
+// another one, and its worktree must hang off the main checkout: nested under
+// the caller's, deleting the caller would strand it with no handle left.
+func TestCreateWorktreeFromInsideAWorktreeHangsOffTheMainRepo(t *testing.T) {
+	s := newSpawner(t)
+	repo := seedRepo(t)
+	first, err := s.Create(Options{Tool: "claude", Name: "wt-outer", Directory: repo, Worktree: true})
+	if err != nil {
+		t.Fatalf("create outer: %v", err)
+	}
+	second, err := s.Create(Options{Tool: "claude", Name: "wt-inner", Directory: first.Session.Cwd, Worktree: true})
+	if err != nil {
+		t.Fatalf("create inner: %v", err)
+	}
+	if second.Session.WorktreeRepo != first.Session.WorktreeRepo {
+		t.Fatalf("inner repo = %q, want the main checkout %q", second.Session.WorktreeRepo, first.Session.WorktreeRepo)
+	}
+	if strings.HasPrefix(second.Session.Cwd, first.Session.Cwd) {
+		t.Fatalf("inner worktree %q nests under the caller's %q", second.Session.Cwd, first.Session.Cwd)
+	}
+}

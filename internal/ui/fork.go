@@ -118,6 +118,7 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 		WorktreeRepo:   source.WorktreeRepo,
 		WorktreeBranch: source.WorktreeBranch,
 	}
+	m.errBar.text = ""
 	if err := m.launchNewSession(forked, tool, baseCommand, spawn.LaunchOptions{}); err != nil {
 		m.reportLaunchError(err)
 		return m, nil
@@ -127,7 +128,6 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 	m.statusFilter = statusFilterAll
 	m.rebuildRows()
 	m.mode = modeList
-	m.errBar.text = ""
 	m.focusSession(managerID)
 	return m, m.refreshCmd()
 }

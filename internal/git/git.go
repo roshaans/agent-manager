@@ -664,6 +664,19 @@ func (d *Driver) RepoRoot(dir string) (string, error) {
 	return top, nil
 }
 
+// MainRepoRoot is the repository a directory's worktrees should hang off:
+// the primary checkout, even when dir is already inside a linked worktree.
+// RepoRoot answers the worktree itself there, and a worktree created off
+// that answer nests under a directory whose deletion strands it — the
+// common dir is the one path every worktree of a repository shares.
+func (d *Driver) MainRepoRoot(dir string) (string, error) {
+	common, err := d.run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("not inside a git repository: %s", dir)
+	}
+	return filepath.Dir(common), nil
+}
+
 var worktreeNamePattern = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 func sanitizeWorktreeName(name string) string {

@@ -126,10 +126,15 @@ func (t *Terminals) Create(sessionID string, opts CreateTerminalOptions) (Termin
 	if !ok {
 		return Terminal{}, errors.New("no shell configured; add a tool block with shell = true to config.toml")
 	}
-	group, dir, err := runtime.createTarget(caller, opts.Group, opts.Directory)
+	groups, err := runtime.store.Groups()
 	if err != nil {
 		return Terminal{}, err
 	}
+	group, dir, err := runtime.createTarget(caller, groups, opts.Group, opts.Directory)
+	if err != nil {
+		return Terminal{}, err
+	}
+	runtime.adoptPaneTheme()
 	id := spawn.NewID()
 	sess := store.Session{
 		ID:     id,

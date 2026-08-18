@@ -314,6 +314,11 @@ func TestCreateSessionWorktreeFollowsTheGroupUntilItIsAsked(t *testing.T) {
 	if inherited.Branch == "" || sameTerminalPath(inherited.Directory, repo) {
 		t.Fatalf("group default did not branch a worktree: %+v", inherited)
 	}
+	// The project starts a script beside every new worktree; the caller has
+	// to be told, since each script holds a port and a process.
+	if len(inherited.AutoRuns) != 1 || !strings.HasPrefix(inherited.AutoRuns[0].Name, "dev-") {
+		t.Fatalf("AutoRuns = %+v, want the started script", inherited.AutoRuns)
+	}
 
 	// An explicit no beats the group, the way the manager's own toggle does.
 	off := false
@@ -332,7 +337,11 @@ func TestCreateSessionWorktreeFollowsTheGroupUntilItIsAsked(t *testing.T) {
 func seedSessionRepo(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".agent-manager"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := "[run.dev]\ncommand = \"cat\"\nauto = true\n"
+	if err := os.WriteFile(filepath.Join(dir, ".agent-manager", "settings.toml"), []byte(settings), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("x"), 0o644); err != nil {

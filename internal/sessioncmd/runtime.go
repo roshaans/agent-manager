@@ -41,11 +41,6 @@ func (c commands) open() (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	// This process never chose the pane theme the manager renders on, so it
-	// takes the one already on the server. Without it a pane opened from here
-	// starts its agent with no COLORFGBG and the agent picks its own colors
-	// against a background it cannot see.
-	driver.AdoptServerPaneTheme()
 	st, err := store.Open(filepath.Join(c.configDir, "state.db"))
 	if err != nil {
 		return nil, err
@@ -75,12 +70,16 @@ func (r *runtime) caller(sessionID string) (store.Session, error) {
 // path, else wherever the calling agent currently is — which for a worktree
 // session is that worktree, and is what makes the common call need no
 // arguments at all.
-func (r *runtime) createTarget(caller store.Session, wantGroup *string, directory string) (string, string, error) {
+// adoptPaneTheme reads the manager's pane theme off the tmux server, so a
+// pane created from this process opens on it and its agent sees COLORFGBG.
+// Called only where a pane is about to be created: it costs two tmux execs,
+// which the read-only commands an agent polls in a loop should not pay.
+func (r *runtime) adoptPaneTheme() {
+	r.driver.AdoptServerPaneTheme()
+}
+
+func (r *runtime) createTarget(caller store.Session, groups []store.Group, wantGroup *string, directory string) (string, string, error) {
 	group := caller.Group
-	groups, err := r.store.Groups()
-	if err != nil {
-		return "", "", err
-	}
 	byName := make(map[string]store.Group, len(groups))
 	archived := make(map[string]bool, len(groups))
 	for _, candidate := range groups {

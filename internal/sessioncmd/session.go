@@ -22,10 +22,22 @@ type Session struct {
 	Directory string `json:"directory" jsonschema:"directory it works in: its own worktree when one was created for it"`
 	Status    string `json:"status" jsonschema:"stored Agent Manager status; a new session starts as starting"`
 	Branch    string `json:"branch,omitempty" jsonschema:"branch of the worktree created for it, when it has one"`
+	// AutoRuns are the project scripts started beside the session for its new
+	// worktree. Named to the caller because each holds a port and a process
+	// the caller would otherwise rediscover by colliding with them.
+	AutoRuns []AutoRun `json:"auto_runs,omitempty" jsonschema:"project run scripts started beside the session, each in its own terminal"`
 	// Warnings is what the session survived rather than what stopped it: an
 	// auto-run script that did not start leaves the agent it belongs to
 	// running, and saying so beats a silence the caller reads as success.
 	Warnings []string `json:"warnings,omitempty" jsonschema:"non-fatal problems; the session is running regardless"`
+}
+
+// AutoRun is one project script a create started, its own flat type because
+// the MCP output schema cannot hold a Session inside a Session.
+type AutoRun struct {
+	ID        string `json:"id" jsonschema:"terminal session id, usable with the terminal tools"`
+	Name      string `json:"name"`
+	Directory string `json:"directory"`
 }
 
 type CreateSessionOptions struct {
@@ -74,7 +86,13 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 	if err != nil {
 		return Session{}, err
 	}
-	group, dir, err := runtime.createTarget(caller, opts.Group, opts.Directory)
+	// One read serves the target validation and the worktree-default walk, so
+	// a group toggled mid-call cannot hand the two different answers.
+	groups, err := runtime.store.Groups()
+	if err != nil {
+		return Session{}, err
+	}
+	group, dir, err := runtime.createTarget(caller, groups, opts.Group, opts.Directory)
 	if err != nil {
 		return Session{}, err
 	}
@@ -85,11 +103,12 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 	// A missing git binary only rules out worktrees; everything else about a
 	// session works without it, so the failure surfaces at the request for one.
 	gitDriver, _ := git.New()
-	worktree, err := runtime.resolveWorktree(opts.Worktree, group, dir, gitDriver)
+	worktree, err := runtime.resolveWorktree(opts.Worktree, groups, group, dir, gitDriver)
 	if err != nil {
 		return Session{}, err
 	}
 
+	runtime.adoptPaneTheme()
 	spawner := spawn.New(runtime.cfg, runtime.store, runtime.driver,
 		hooks.NewManager(s.configDir), gitDriver, nil)
 	result, err := spawner.Create(spawn.Options{
@@ -106,7 +125,7 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 	if err != nil {
 		return Session{}, err
 	}
-	return Session{
+	created := Session{
 		ID:        result.Session.ID,
 		Name:      result.Session.Name,
 		Tool:      result.Session.Tool,
@@ -115,7 +134,11 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 		Status:    result.Session.Status,
 		Branch:    result.Session.WorktreeBranch,
 		Warnings:  result.Warnings,
-	}, nil
+	}
+	for _, run := range result.AutoRuns {
+		created.AutoRuns = append(created.AutoRuns, AutoRun{ID: run.ID, Name: run.Name, Directory: run.Cwd})
+	}
+	return created, nil
 }
 
 // resolveTool picks the CLI a session launches with. A named one only has to
@@ -147,7 +170,7 @@ func (r *runtime) resolveTool(named string) (string, error) {
 // explicit request that cannot be met is an error; an inherited default that
 // cannot be met just does not apply, the way the manager's own toggle greys
 // itself out in a directory that is not a repository.
-func (r *runtime) resolveWorktree(want *bool, group, dir string, gitDriver *git.Driver) (bool, error) {
+func (r *runtime) resolveWorktree(want *bool, groups []store.Group, group, dir string, gitDriver *git.Driver) (bool, error) {
 	if gitDriver == nil {
 		if want != nil && *want {
 			return false, errors.New("worktree sessions need git installed")
@@ -166,10 +189,6 @@ func (r *runtime) resolveWorktree(want *bool, group, dir string, gitDriver *git.
 		return false, nil
 	}
 	fallback, err := r.setting(store.SettingWorktreeDefault)
-	if err != nil {
-		return false, err
-	}
-	groups, err := r.store.Groups()
 	if err != nil {
 		return false, err
 	}

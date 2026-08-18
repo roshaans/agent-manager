@@ -457,15 +457,21 @@ func TestCreateSessionForwardsArgumentsAndReportsTheSession(t *testing.T) {
 func TestCreateSessionSurfacesWarningsBesideTheSession(t *testing.T) {
 	fake := &fakeSessionCommands{created: sessioncmd.Session{
 		ID: "a1b2c3d4", Name: "fix-auth", Tool: "claude", Status: "starting",
-		Warnings: []string{"auto-run dev: no shell configured"},
+		AutoRuns: []sessioncmd.AutoRun{{ID: "e5f6a7b8", Name: "dev-fix-auth"}},
+		Warnings: []string{"auto-run web: no shell configured"},
 	}}
 	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", &fakeTerminalCommands{}, fake))
 	text, isError := callText(t, session, "create_session", map[string]any{"prompt": "do it"})
 	if isError {
 		t.Fatalf("a warning must not read as a failure: %q", text)
 	}
-	if !strings.Contains(text, "auto-run dev") {
+	if !strings.Contains(text, "auto-run web") {
 		t.Fatalf("warning not reported: %q", text)
+	}
+	// A script that did start is named too: it holds a port and a process the
+	// caller would otherwise rediscover by colliding with them.
+	if !strings.Contains(text, "dev-fix-auth") {
+		t.Fatalf("started auto-run not reported: %q", text)
 	}
 }
 

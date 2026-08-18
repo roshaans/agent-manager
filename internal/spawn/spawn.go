@@ -149,7 +149,10 @@ func (s *Spawner) Create(opts Options) (Result, error) {
 		if s.git == nil {
 			return Result{}, errors.New("worktree sessions need git installed")
 		}
-		root, err := s.git.RepoRoot(dir)
+		// The main checkout, not RepoRoot: a caller already working in a
+		// linked worktree — exactly where an agent asking for isolation sits —
+		// would otherwise nest the new worktree under its own.
+		root, err := s.git.MainRepoRoot(dir)
 		if err != nil {
 			return Result{}, err
 		}
@@ -237,7 +240,9 @@ func (s *Spawner) Create(opts Options) (Result, error) {
 		Session:   launched,
 		AutoNamed: autoNamed,
 		AutoRuns:  autoRunSessions,
-		Warnings:  append(launchWarnings, autoRunWarnings...),
+		// Auto-run failures first: a dev server that did not start outranks a
+		// cosmetic label error for callers that can only show one.
+		Warnings: append(autoRunWarnings, launchWarnings...),
 	}, nil
 }
 

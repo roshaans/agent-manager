@@ -84,6 +84,7 @@ func (m *Model) openTerminal() (tea.Model, tea.Cmd) {
 		Status:   status.Starting,
 		ParentID: parent.ID,
 	}
+	m.errBar.text = ""
 	if err := m.launchNewSession(sess, tool, tool.Command, spawn.LaunchOptions{}); err != nil {
 		m.errBar.text = err.Error()
 		return m, nil
@@ -91,7 +92,6 @@ func (m *Model) openTerminal() (tea.Model, tea.Cmd) {
 	// Starting sits outside the attention set, so the row the key just made
 	// would be filtered off screen.
 	m.statusFilter = statusFilterAll
-	m.errBar.text = ""
 	m.focusSession(sess.ID)
 	return m, m.refreshCmd()
 }
