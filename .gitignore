@@ -25,3 +25,6 @@ id_ed25519
 # dev builds of this manager, made by [run.tui]
 /.am-dev
 /.am-dev-home/
+
+# success marker a project setup script leaves for auto-run to wait on
+.agent-manager/.setup-complete
