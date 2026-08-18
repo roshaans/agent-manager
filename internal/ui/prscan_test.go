@@ -671,3 +671,64 @@ func writeCommit(t *testing.T, dir, name, body string) {
 	gitAt(t, dir, "add", name)
 	gitAt(t, dir, "commit", "--quiet", "-m", "add "+name)
 }
+
+// The rollup is what a reader would do with the list: anything broken makes
+// the whole thing broken, anything still going makes it pending, and only a
+// finished set with no failure is passing.
+func TestChecksRollUpTheWayAReaderWould(t *testing.T) {
+	run := func(status, conclusion string) checkRun {
+		return checkRun{Status: status, Conclusion: conclusion}
+	}
+	for _, tc := range []struct {
+		name string
+		runs []checkRun
+		want checksState
+	}{
+		{"nothing reported", nil, checksUnknown},
+		{"all green", []checkRun{run("COMPLETED", "SUCCESS"), run("COMPLETED", "SUCCESS")}, checksPassing},
+		{"one broken", []checkRun{run("COMPLETED", "SUCCESS"), run("COMPLETED", "FAILURE")}, checksFailing},
+		{"still going", []checkRun{run("COMPLETED", "SUCCESS"), run("IN_PROGRESS", "")}, checksRunning},
+		// Broken wins over pending: a run that has already failed is not made
+		// provisional by another that has not finished.
+		{"broken and pending", []checkRun{run("IN_PROGRESS", ""), run("COMPLETED", "FAILURE")}, checksFailing},
+		{"timed out", []checkRun{run("COMPLETED", "TIMED_OUT")}, checksFailing},
+		{"cancelled", []checkRun{run("COMPLETED", "CANCELLED")}, checksFailing},
+		// Somebody arranged for these not to run, or not to matter.
+		{"skipped and neutral", []checkRun{run("COMPLETED", "SKIPPED"), run("COMPLETED", "NEUTRAL")}, checksPassing},
+		// A legacy commit status reports neither status nor conclusion.
+		{"legacy status failing", []checkRun{{State: "FAILURE"}}, checksFailing},
+		{"legacy status pending", []checkRun{{State: "PENDING"}}, checksRunning},
+		{"legacy status green", []checkRun{{State: "SUCCESS"}}, checksPassing},
+	} {
+		if got := (pullRequest{Checks: tc.runs}).checks(); got != tc.want {
+			t.Errorf("%s: checks = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The colour is the whole point, so it has to differ per state rather than
+// merely be set.
+func TestPRChipColoursByChecks(t *testing.T) {
+	pass := checkRun{Status: "COMPLETED", Conclusion: "SUCCESS"}
+	fail := checkRun{Status: "COMPLETED", Conclusion: "FAILURE"}
+	busy := checkRun{Status: "IN_PROGRESS"}
+	m := &Model{insights: map[string]sessionInsight{
+		"green":   {prs: []pullRequest{{Number: 1, Checks: []checkRun{pass}}}},
+		"red":     {prs: []pullRequest{{Number: 2, Checks: []checkRun{fail}}}},
+		"amber":   {prs: []pullRequest{{Number: 3, Checks: []checkRun{busy}}}},
+		"unknown": {prs: []pullRequest{{Number: 4}}},
+	}}
+	seen := map[string]string{}
+	for _, id := range []string{"green", "red", "amber", "unknown"} {
+		chip := m.prChip(store.Session{ID: id})
+		if !strings.Contains(ansi.Strip(chip), "#") {
+			t.Fatalf("%s: chip lost its number: %q", id, chip)
+		}
+		seen[id] = chip
+	}
+	for _, pair := range [][2]string{{"green", "red"}, {"green", "amber"}, {"red", "amber"}, {"green", "unknown"}} {
+		if seen[pair[0]] == seen[pair[1]] {
+			t.Errorf("%s and %s render identically: %q", pair[0], pair[1], seen[pair[0]])
+		}
+	}
+}
