@@ -546,8 +546,10 @@ func (m *Model) renderSessionEntry(entry treeRow, selected bool, width int, pad,
 		nameStyle = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 	}
 	head := pad + guides + dot + " " + nameStyle.Render(m.displayName(sess))
-	if chip := m.prChip(sess); chip != "" {
-		head += " " + chip
+	for _, chip := range []string{m.prChip(sess), m.syncChip(sess)} {
+		if chip != "" {
+			head += " " + chip
+		}
 	}
 	focused := selected && m.mode == modeFocus
 	if focused {
@@ -890,8 +892,10 @@ func (m *Model) viewDetail(width int) string {
 	// has both wants the number, and the branch is the half they can also
 	// read off the row they came from.
 	withPR := withTool
-	if chip := m.prChip(sess); chip != "" {
-		withPR = withTool + " " + chip
+	for _, chip := range []string{m.prChip(sess), m.syncChip(sess)} {
+		if chip != "" {
+			withPR += " " + chip
+		}
 	}
 	heads := []string{withPR, withTool, name}
 	if sess.WorktreeBranch != "" {

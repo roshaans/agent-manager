@@ -93,10 +93,12 @@ func (m *Model) handlePRCreated(msg prCreatedMsg) (tea.Model, tea.Cmd) {
 	}
 	// Shown now rather than at the next pass, so the badge appears with the
 	// pull request it belongs to.
-	if m.prs == nil {
-		m.prs = map[string][]pullRequest{}
+	if m.insights == nil {
+		m.insights = map[string]sessionInsight{}
 	}
-	m.prs[msg.sessID] = append([]pullRequest{msg.pr}, m.prs[msg.sessID]...)
+	insight := m.insights[msg.sessID]
+	insight.prs = append([]pullRequest{msg.pr}, insight.prs...)
+	m.insights[msg.sessID] = insight
 	m.requestRefresh()
 	return m.openPRTarget(msg.pr.URL)
 }

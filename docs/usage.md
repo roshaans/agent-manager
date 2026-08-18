@@ -136,6 +136,14 @@ The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Eac
 
 A checkout whose `origin` is a fork is read twice per pass — once naming that fork, once letting `gh` resolve the repository itself, which always answers with the parent. Both are needed, because a fork holds pull requests either way round: opened against the parent, a pull request lives upstream, and opened against the fork it lives on the fork. A checkout that is nobody's fork answers both the same way and the repeats are dropped.
 
+## Ahead and behind
+
+A session whose checkout has drifted from its remote branch says so beside its name: `↑2` for commits it has not pushed, `↓3` for commits the remote has that it does not. Behind is coloured to be noticed and ahead is not, because unpushed work is what a session in progress looks like, while a checkout that has fallen behind is usually a conflict nobody has run into yet.
+
+A branch with no upstream shows nothing at all. "In step" and "nothing to compare against" are different answers, and a `↑0 ↓0` would report the second as the first.
+
+This rides the same once-a-minute pass as the [pull request](#pull-requests) badge. Ahead comes out of git alone, so it works with no network and with no `gh` installed. Behind is only as fresh as the last fetch, so the pass fetches — once per repository rather than once per session, since several worktrees of one repository all have the same answer. The fetch moves remote-tracking refs and nothing else: no local branch, no index, nothing in the working tree, and `FETCH_HEAD` is deliberately left alone, since that is a file an agent may be reading for its own purposes.
+
 ## Agent rules
 
 Every CLI reads an instruction file before its first turn — `CLAUDE.md` for Claude Code, `AGENTS.md` for Codex, OpenCode, Grok, Pi and Hermes, `GEMINI.md` for Gemini CLI — and which one it reads is a property of the tool, not of the directory. `i` on a session shows the files *that* session is actually governed by, so you can read what an agent was told before you ask why it did something.

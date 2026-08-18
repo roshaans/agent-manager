@@ -177,6 +177,12 @@ func helpSections() []helpSection {
 			{"r", "open the repository instead"},
 			{"esc", "back"},
 		}},
+		{title: "ahead and behind", rows: [][2]string{
+			{"", "↑2 beside a session: two commits it has not pushed"},
+			{"", "↓3: three its remote has that it does not, coloured to be noticed"},
+			{"", "nothing: no upstream to compare against, not the same as in step"},
+			{"", "read once a minute, one fetch per repository, not per session"},
+		}},
 		{title: "settings (s)", rows: [][2]string{
 			{"↑↓", "pick a field"},
 			{"←→", "change the value"},

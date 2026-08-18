@@ -126,7 +126,7 @@ func (m *Model) rowPullRequests() []pullRequest {
 	if !ok || entry.isGroup {
 		return nil
 	}
-	if prs := m.prs[entry.sess.ID]; len(prs) > 0 {
+	if prs := m.insights[entry.sess.ID].prs; len(prs) > 0 {
 		return prs
 	}
 	if entry.sess.PRURL != "" {

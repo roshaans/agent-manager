@@ -71,14 +71,29 @@ var (
 	prScanFirstDelay = 3 * time.Second
 )
 
+// sessionInsight is everything one pass learned about a session. A pass
+// already resolves each session to a checkout and each checkout to a
+// repository, and caches both; anything else worth showing on a row costs a
+// field here rather than a timer and a set of lookups of its own.
+type sessionInsight struct {
+	prs []pullRequest
+	// ahead and behind are the checkout against its remote branch. synced
+	// says the two were worked out at all: a branch nobody has pushed has
+	// nothing to compare against, and "in step" is not the same as "no idea".
+	ahead, behind int
+	synced        bool
+}
+
+func (in sessionInsight) empty() bool { return len(in.prs) == 0 && !in.synced }
+
 type prScanTickMsg struct{}
 
 // prScanMsg carries a finished pass: each session's pull requests, and the
 // links a pass newly observed, which Update writes to the store so they
 // outlive the manager run that noticed them.
 type prScanMsg struct {
-	prs   map[string][]pullRequest
-	links map[string]string
+	insights map[string]sessionInsight
+	links    map[string]string
 	// ran reports that the pass actually reached the host. A pass that could
 	// not is not evidence that a session has no pull request, and must not be
 	// allowed to clear what an earlier one established.
@@ -120,8 +135,8 @@ func (m *Model) prScanCmd() tea.Cmd {
 	}
 	drv, capture := m.gitDrv, m.paneHistory
 	return func() tea.Msg {
-		prs, links, ran := scanPullRequests(drv, capture, targets)
-		return prScanMsg{prs: prs, links: links, ran: ran}
+		insights, links, ran := scanSessions(drv, capture, targets)
+		return prScanMsg{insights: insights, links: links, ran: ran}
 	}
 }
 
@@ -165,18 +180,21 @@ type prPlace struct{ root, branch, head, repoURL string }
 // with six worktrees under six sessions costs one request and not six. That
 // is the whole reason the badge reads a repository's open pull requests
 // instead of asking after each branch in turn.
-func scanPullRequests(drv *git.Driver, capture func(string) string, targets []prScanTarget) (map[string][]pullRequest, map[string]string, bool) {
-	if _, err := lookPath("gh"); err != nil {
-		return nil, nil, false
-	}
+func scanSessions(drv *git.Driver, capture func(string) string, targets []prScanTarget) (map[string]sessionInsight, map[string]string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), prScanTimeout)
 	defer cancel()
+
+	// gh gates the pull requests and nothing else. Ahead and behind come out
+	// of git, and a machine without gh installed still deserves them.
+	_, ghErr := lookPath("gh")
 
 	places := map[string]prPlace{}
 	listings := map[string][]pullRequest{}
 	viewed := map[string]pullRequest{}
 	commits := map[string][]pullRequest{}
-	found := map[string][]pullRequest{}
+	fetched := map[string]bool{}
+	sync := map[string]sessionInsight{}
+	found := map[string]sessionInsight{}
 	links := map[string]string{}
 	for _, target := range targets {
 		place, known := places[target.dir]
@@ -184,7 +202,31 @@ func scanPullRequests(drv *git.Driver, capture func(string) string, targets []pr
 			place = locatePlace(drv, target.dir)
 			places[target.dir] = place
 		}
-		if place.repoURL == "" {
+		if place.root == "" {
+			continue
+		}
+
+		var insight sessionInsight
+		// One fetch per repository, not per session: six worktrees under six
+		// sessions are six checkouts of one remote, and the answer is the
+		// same for all of them.
+		if cached, known := sync[place.root]; known {
+			insight = cached
+		} else {
+			if !fetched[place.root] {
+				fetched[place.root] = true
+				fetchRemote(drv, place.root)
+			}
+			if ahead, behind, err := drv.AheadBehind(place.root); err == nil {
+				insight.ahead, insight.behind, insight.synced = ahead, behind, true
+			}
+			sync[place.root] = insight
+		}
+
+		if place.repoURL == "" || ghErr != nil {
+			if !insight.empty() {
+				found[target.sessID] = insight
+			}
 			continue
 		}
 		listing, known := listings[place.repoURL]
@@ -258,13 +300,16 @@ func scanPullRequests(drv *git.Driver, capture func(string) string, targets []pr
 		if printed != "" {
 			add(resolveRecorded(ctx, place.root, printed, listing, viewed))
 		}
-		if len(prs) > 0 {
-			found[target.sessID] = prs
+		insight.prs = prs
+		if !insight.empty() {
+			found[target.sessID] = insight
 		}
 	}
 	// A pass cut short by its own deadline has read some repositories and not
-	// others, and the ones it missed look empty rather than unread.
-	return found, links, ctx.Err() == nil
+	// others, and the ones it missed look empty rather than unread. gh missing
+	// is the same kind of gap: the git half still ran, but nothing can be
+	// concluded about pull requests from a pass that never asked.
+	return found, links, ctx.Err() == nil && ghErr == nil
 }
 
 // allowedRepos is which repositories an address printed in a session may name
@@ -476,7 +521,7 @@ func pullRequestsOn(ctx context.Context, root, repoURL, branch string) []pullReq
 // the number, dimmed and marked when that pull request is still a draft, and
 // how many others there are when the branch carries more than one.
 func (m *Model) prChip(sess store.Session) string {
-	prs := m.prs[sess.ID]
+	prs := m.insights[sess.ID].prs
 	if len(prs) == 0 {
 		return ""
 	}
@@ -492,4 +537,39 @@ func (m *Model) prChip(sess store.Session) string {
 		return pill(label, colorSubtle)
 	}
 	return pill(label, colorAccent2)
+}
+
+// fetchRemote is the seam tests swap, so a pass under test never reaches a
+// network and never writes to a repository it did not create.
+var fetchRemote = func(drv *git.Driver, root string) { drv.Fetch(root) }
+
+// syncChip is what a session's checkout owes its remote: work it has not
+// pushed, work it has not pulled, or both.
+//
+// Behind is the half worth colouring for attention. Unpushed work is normal —
+// it is what a session in progress looks like — where a checkout that has
+// fallen behind is about to produce a conflict nobody has noticed yet.
+//
+// A branch with no upstream shows nothing at all. "In step" and "nothing to
+// compare against" are different answers, and a zero would report the second
+// as the first.
+func (m *Model) syncChip(sess store.Session) string {
+	in := m.insights[sess.ID]
+	if !in.synced || (in.ahead == 0 && in.behind == 0) {
+		return ""
+	}
+	label := ""
+	if in.ahead > 0 {
+		label += "↑" + strconv.Itoa(in.ahead)
+	}
+	if in.behind > 0 {
+		if label != "" {
+			label += " "
+		}
+		label += "↓" + strconv.Itoa(in.behind)
+	}
+	if in.behind > 0 {
+		return pill(label, colorWaiting)
+	}
+	return pill(label, colorSubtle)
 }

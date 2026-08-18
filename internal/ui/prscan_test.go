@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/YoanWai/agent-manager/internal/git"
 	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func scanDriver(t *testing.T) *git.Driver {
@@ -34,10 +36,10 @@ func TestScanMatchesTheBranchOnly(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:owner/repo.git")
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
 
-	if len(found["s1"]) != 1 || found["s1"][0].Number != 1 {
-		t.Fatalf("scan found %v, want only the pull request on this branch", found["s1"])
+	if len(found["s1"].prs) != 1 || found["s1"].prs[0].Number != 1 {
+		t.Fatalf("scan found %v, want only the pull request on this branch", found["s1"].prs)
 	}
 }
 
@@ -53,7 +55,7 @@ func TestScanListsARemoteOnce(t *testing.T) {
 	worktree := filepath.Join(t.TempDir(), "wt")
 	gitAt(t, repo, "worktree", "add", "-b", "am/side", worktree)
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo},
 		{sessID: "s2", dir: repo},
 		{sessID: "s3", dir: worktree},
@@ -62,11 +64,11 @@ func TestScanListsARemoteOnce(t *testing.T) {
 	if *calls != 1 {
 		t.Fatalf("the scan listed the remote %d times, want once", *calls)
 	}
-	if len(found["s1"]) != 1 {
-		t.Fatalf("the session on main found %v, want its pull request", found["s1"])
+	if len(found["s1"].prs) != 1 {
+		t.Fatalf("the session on main found %v, want its pull request", found["s1"].prs)
 	}
-	if len(found["s3"]) != 0 {
-		t.Fatalf("the worktree on another branch found %v, want none", found["s3"])
+	if len(found["s3"].prs) != 0 {
+		t.Fatalf("the worktree on another branch found %v, want none", found["s3"].prs)
 	}
 }
 
@@ -94,13 +96,13 @@ func TestScanListsTheRemoteAndWhatGHResolves(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if want := []string{"https://github.com/me/fork", ""}; !slices.Equal(asked, want) {
 		t.Fatalf("listed %v, want the remote first and gh's own resolution second", asked)
 	}
-	if len(found["s1"]) != 2 || found["s1"][0].URL != "fork/1" {
-		t.Fatalf("found %v, want both, the fork's own first", found["s1"])
+	if len(found["s1"].prs) != 2 || found["s1"].prs[0].URL != "fork/1" {
+		t.Fatalf("found %v, want both, the fork's own first", found["s1"].prs)
 	}
 }
 
@@ -129,7 +131,7 @@ func TestScanSkipsWhatCannotHaveAPullRequest(t *testing.T) {
 	loose := t.TempDir()
 	unpublished := seedRepo(t)
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: loose},
 		{sessID: "s2", dir: unpublished},
 	})
@@ -142,18 +144,28 @@ func TestScanSkipsWhatCannotHaveAPullRequest(t *testing.T) {
 	}
 }
 
-// Without gh there is nothing to ask, and no badge is the right amount of
-// noise about a tool the reader never asked to install.
-func TestScanWithoutTheCLI(t *testing.T) {
+// gh gates the pull requests and nothing else. Without it there are no
+// numbers to show, but ahead and behind come out of git and a machine with no
+// gh installed still deserves them.
+func TestScanWithoutTheCLIStillReadsGit(t *testing.T) {
 	drv := scanDriver(t)
 	prev := lookPath
 	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(func() { lookPath = prev })
+	calls := captureListing(t, pullRequest{Number: 1, Head: "main"})
 	repo := seedRepo(t)
-	remoteAt(t, repo, "git@github.com:owner/repo.git")
+	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	if found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}}); found != nil {
-		t.Fatalf("scan found %v without gh, want nothing", found)
+	found, _, ran := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	if ran {
+		t.Fatal("a pass that never asked gh reported that it did")
+	}
+	if len(found["s1"].prs) != 0 {
+		t.Fatalf("found %v pull requests without gh", found["s1"].prs)
+	}
+	if *calls != 0 {
+		t.Fatalf("asked gh %d times without it installed", *calls)
 	}
 }
 
@@ -182,11 +194,11 @@ func TestScanTargetsLeaveOutShellsAndArchived(t *testing.T) {
 
 func TestPRChip(t *testing.T) {
 	m := buildModel(t)
-	m.prs = map[string][]pullRequest{
+	m.insights = insightsOf(map[string][]pullRequest{
 		"open":  {{Number: 328}},
 		"draft": {{Number: 327, IsDraft: true}},
 		"both":  {{Number: 12}, {Number: 11}},
-	}
+	})
 	for _, tc := range []struct{ id, want string }{
 		{"open", "#328"},
 		{"draft", "#327" + prDraftMark},
@@ -244,10 +256,10 @@ func TestScanFindsAPullRequestByCommit(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
 
-	if len(found["s1"]) != 1 || found["s1"][0].Number != 5 {
-		t.Fatalf("found %v, want the pull request the commit is in", found["s1"])
+	if len(found["s1"].prs) != 1 || found["s1"].prs[0].Number != 5 {
+		t.Fatalf("found %v, want the pull request the commit is in", found["s1"].prs)
 	}
 	head := gitOut(t, repo, "rev-parse", "HEAD")
 	if *sha != head {
@@ -270,7 +282,7 @@ func TestScanAsksAboutACommitOnce(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	scanPullRequests(drv, noPane, []prScanTarget{
+	scanSessions(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo},
 		{sessID: "s2", dir: repo},
 	})
@@ -297,12 +309,12 @@ func TestScanOrdersCreatedThenCommitThenBranch(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo, prURL: recorded.URL, prSource: prSourceCreated},
 	})
 
 	var got []int
-	for _, pr := range found["s1"] {
+	for _, pr := range found["s1"].prs {
 		got = append(got, pr.Number)
 	}
 	if !slices.Equal(got, []int{1, 2, 3}) {
@@ -328,10 +340,10 @@ func TestScanRanksAPrintedAddressBehindTheCommit(t *testing.T) {
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 	pane := func(string) string { return "have a look at " + theirs.URL }
 
-	found, _, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanSessions(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
 
-	if len(found["s1"]) == 0 || found["s1"][0].Number != 9 {
-		t.Fatalf("found %v, want the commit's own pull request leading", found["s1"])
+	if len(found["s1"].prs) == 0 || found["s1"].prs[0].Number != 9 {
+		t.Fatalf("found %v, want the commit's own pull request leading", found["s1"].prs)
 	}
 }
 
@@ -351,22 +363,29 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 // whenever the network hiccups or gh is briefly unavailable.
 func TestFailedPassKeepsTheBadgesOnScreen(t *testing.T) {
 	m := buildModel(t)
-	kept := map[string][]pullRequest{"s1": {{Number: 7}}}
-	m.prs = kept
+	m.insights = insightsOf(map[string][]pullRequest{"s1": {{Number: 7}}})
 
-	updated, _ := m.Update(prScanMsg{prs: nil, ran: false})
+	// git still answered, so ahead and behind land; gh did not, so the
+	// number it found earlier stays put.
+	updated, _ := m.Update(prScanMsg{
+		insights: map[string]sessionInsight{"s1": {ahead: 2, synced: true}},
+		ran:      false,
+	})
 	*m = *updated.(*Model)
 
-	if len(m.prs["s1"]) != 1 {
-		t.Fatalf("a pass that never ran cleared the badges: %v", m.prs)
+	if len(m.insights["s1"].prs) != 1 {
+		t.Fatalf("a pass that never reached gh cleared the badges: %v", m.insights)
+	}
+	if got := m.insights["s1"]; got.ahead != 2 || !got.synced {
+		t.Fatalf("the git half was thrown away with the gh half: %+v", got)
 	}
 
-	// A pass that did run and found nothing is evidence, and does clear.
-	updated, _ = m.Update(prScanMsg{prs: map[string][]pullRequest{}, ran: true})
+	// A pass that did reach gh and found nothing is evidence, and does clear.
+	updated, _ = m.Update(prScanMsg{insights: map[string]sessionInsight{}, ran: true})
 	*m = *updated.(*Model)
 
-	if len(m.prs["s1"]) != 0 {
-		t.Fatalf("a pass that ran should have cleared: %v", m.prs)
+	if len(m.insights["s1"].prs) != 0 {
+		t.Fatalf("a pass that ran should have cleared: %v", m.insights)
 	}
 }
 
@@ -377,7 +396,7 @@ func TestScanWithoutTheCLIDidNotRun(t *testing.T) {
 	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	t.Cleanup(func() { lookPath = prev })
 
-	if _, _, ran := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: t.TempDir()}}); ran {
+	if _, _, ran := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: t.TempDir()}}); ran {
 		t.Fatal("a pass without gh reported that it ran")
 	}
 }
@@ -398,14 +417,14 @@ func TestRecordedLinkBadgesWithoutTheHost(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/42", prSource: prSourceCreated},
 	})
 
-	if len(found["s1"]) != 1 || found["s1"][0].Number != 42 {
-		t.Fatalf("found %v, want the recorded number from the address alone", found["s1"])
+	if len(found["s1"].prs) != 1 || found["s1"].prs[0].Number != 42 {
+		t.Fatalf("found %v, want the recorded number from the address alone", found["s1"].prs)
 	}
-	if m := (&Model{prs: found}).prChip(store.Session{ID: "s1"}); !strings.Contains(m, "#42") {
+	if m := (&Model{insights: found}).prChip(store.Session{ID: "s1"}); !strings.Contains(m, "#42") {
 		t.Fatalf("chip = %q, want it to carry the number", m)
 	}
 }
@@ -426,7 +445,7 @@ func TestRecordedLinkStillDropsWhenKnownMerged(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/42", prSource: prSourceCreated},
 	})
 
@@ -470,8 +489,8 @@ func TestScanTickRunsAPassAndSchedulesTheNext(t *testing.T) {
 	if !scanned.ran {
 		t.Fatal("the pass reported that it never ran")
 	}
-	if len(scanned.prs) != 1 {
-		t.Fatalf("the pass found %v, want the session's pull request", scanned.prs)
+	if len(scanned.insights) != 1 {
+		t.Fatalf("the pass found %v, want the session's pull request", scanned.insights)
 	}
 
 	// And the result reaches the badge.
@@ -525,4 +544,130 @@ func armsWithin(batch tea.BatchMsg, within time.Duration, want tea.Msg) bool {
 			return false
 		}
 	}
+}
+
+// insightsOf wraps plain pull requests as the records a pass produces, so a
+// test that only cares about numbers does not have to spell the rest out.
+func insightsOf(bySession map[string][]pullRequest) map[string]sessionInsight {
+	out := make(map[string]sessionInsight, len(bySession))
+	for id, prs := range bySession {
+		out[id] = sessionInsight{prs: prs}
+	}
+	return out
+}
+
+// pushTo gives a repository a real remote to be ahead of and behind: a bare
+// clone on disk, so a pass can fetch without a network.
+func pushTo(t *testing.T, repo string) string {
+	t.Helper()
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	gitAt(t, repo, "init", "--bare", "--quiet", remote)
+	gitAt(t, repo, "remote", "add", "origin", remote)
+	gitAt(t, repo, "push", "--quiet", "--set-upstream", "origin", "main")
+	return remote
+}
+
+// The two halves of "do I need to push, do I need to pull", against a remote
+// that really moved underneath the checkout.
+func TestScanCountsAheadAndBehind(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t)
+	repo := seedRepo(t)
+	remote := pushTo(t, repo)
+	// A second clone stands in for whoever else pushed.
+	other := filepath.Join(t.TempDir(), "other")
+	gitAt(t, repo, "clone", "--quiet", remote, other)
+	writeCommit(t, other, "theirs.txt", "theirs")
+	gitAt(t, other, "push", "--quiet", "origin", "main")
+	// And this checkout has work of its own that never left.
+	writeCommit(t, repo, "mine.txt", "mine")
+
+	prev := fetchRemote
+	fetchRemote = func(drv *git.Driver, root string) { drv.Fetch(root) }
+	t.Cleanup(func() { fetchRemote = prev })
+
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	got := found["s1"]
+	if !got.synced {
+		t.Fatal("a branch with an upstream reported nothing to compare against")
+	}
+	if got.ahead != 1 || got.behind != 1 {
+		t.Fatalf("ahead=%d behind=%d, want one each", got.ahead, got.behind)
+	}
+}
+
+// A branch nobody has pushed has nothing to compare against, and zero would
+// report that as being in step.
+func TestScanLeavesAnUnpushedBranchUnsynced(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t)
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	if found["s1"].synced {
+		t.Fatalf("a branch with no upstream reported %+v", found["s1"])
+	}
+	if chip := (&Model{insights: found}).syncChip(store.Session{ID: "s1"}); chip != "" {
+		t.Fatalf("chip = %q, want nothing rather than a zero", chip)
+	}
+}
+
+// Six worktrees under six sessions are six checkouts of one remote, and the
+// answer is the same for all of them.
+func TestScanFetchesARepositoryOnce(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t)
+	repo := seedRepo(t)
+	pushTo(t, repo)
+	fetched := 0
+	prev := fetchRemote
+	fetchRemote = func(*git.Driver, string) { fetched++ }
+	t.Cleanup(func() { fetchRemote = prev })
+
+	scanSessions(drv, noPane, []prScanTarget{
+		{sessID: "s1", dir: repo},
+		{sessID: "s2", dir: repo},
+		{sessID: "s3", dir: repo},
+	})
+
+	if fetched != 1 {
+		t.Fatalf("fetched %d times for one repository, want once", fetched)
+	}
+}
+
+func TestSyncChip(t *testing.T) {
+	m := &Model{insights: map[string]sessionInsight{
+		"ahead":   {ahead: 2, synced: true},
+		"behind":  {behind: 3, synced: true},
+		"both":    {ahead: 1, behind: 4, synced: true},
+		"level":   {synced: true},
+		"unknown": {},
+	}}
+	for _, tc := range []struct{ id, want string }{
+		{"ahead", "↑2"},
+		{"behind", "↓3"},
+		{"both", "↑1 ↓4"},
+		{"level", ""},
+		{"unknown", ""},
+	} {
+		got := ansi.Strip(m.syncChip(store.Session{ID: tc.id}))
+		if strings.TrimSpace(got) != tc.want {
+			t.Errorf("chip for %s = %q, want %q", tc.id, strings.TrimSpace(got), tc.want)
+		}
+	}
+}
+
+func writeCommit(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "add", name)
+	gitAt(t, dir, "commit", "--quiet", "-m", "add "+name)
 }

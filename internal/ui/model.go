@@ -200,12 +200,13 @@ type Model struct {
 	// declaration for as long as this manager runs.
 	pickedRepos map[string]string
 
-	// prs is each session's pull requests, keyed by session ID and replaced
-	// whole by every scan. The titles and states in it are a view of GitHub
-	// rather than of this manager's own state, so they are not persisted: a
-	// badge left over from last week would be a claim nobody checked. Which
-	// pull request belongs to which session is persisted, on the session.
-	prs map[string][]pullRequest
+	// insights is what the last pass learned about each session, keyed by
+	// session ID and replaced whole. The titles and states in it are a view
+	// of GitHub rather than of this manager's own state, so they are not
+	// persisted: a badge left over from last week would be a claim nobody
+	// checked. Which pull request belongs to which session is persisted, on
+	// the session.
+	insights map[string]sessionInsight
 
 	// awaitedRenames holds the generated name a spawned session launched
 	// under, for as long as the agent it carries the rename directive to is
@@ -309,6 +310,27 @@ type errBar struct {
 // reportDone fills done, and any later write to text alone leaves it
 // behind, so a message says it worked or reads as a failure.
 func (e errBar) worked() bool { return e.text != "" && e.text == e.done }
+
+// keepPullRequests takes what a pass did work out while leaving the pull
+// requests alone. A pass that never reached gh still read git, so ahead and
+// behind are fresh; the numbers beside them are the ones an earlier pass
+// established, and dropping those would blank every badge for a minute
+// whenever the host is briefly out of reach.
+func (m *Model) keepPullRequests(fresh map[string]sessionInsight) {
+	merged := make(map[string]sessionInsight, len(fresh))
+	for id, insight := range fresh {
+		insight.prs = m.insights[id].prs
+		merged[id] = insight
+	}
+	// A session the pass no longer covers keeps nothing, but one it covered
+	// with no git answer at all keeps what it had.
+	for id, was := range m.insights {
+		if _, still := merged[id]; !still && len(was.prs) > 0 {
+			merged[id] = sessionInsight{prs: was.prs}
+		}
+	}
+	m.insights = merged
+}
 
 // reportDone puts an action that went through on the status bar.
 func (m *Model) reportDone(text string) {
@@ -1111,9 +1133,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prScanMsg:
 		// A pass that never reached the host says nothing about which pull
-		// requests exist, so what is on screen stays on screen.
+		// requests exist, so the numbers on screen stay. What git worked out
+		// on its own — ahead and behind — is good regardless, so it lands
+		// either way.
 		if msg.ran {
-			m.prs = msg.prs
+			m.insights = msg.insights
+		} else {
+			m.keepPullRequests(msg.insights)
 		}
 		// A link is written back so it survives the manager quitting: what a
 		// session printed scrolls out of its pane long before the work it
