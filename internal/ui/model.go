@@ -60,6 +60,9 @@ const (
 	// modePRPick lists the open pull requests on a branch that has more than
 	// one, on a P that cannot pick for the reader.
 	modePRPick
+	// modePRCreate offers to open a pull request for a session that has
+	// none, which is the only way the link to it is ever a fact.
+	modePRCreate
 )
 
 type treeRow struct {
@@ -186,6 +189,7 @@ type Model struct {
 	runInit     runInitState
 	rules       rulesState
 	prPick      prPickState
+	prCreate    prCreateState
 	// editorReturnID is the session an editor request detached from, so the
 	// attach it cost can be resumed once the editor is up.
 	editorReturnID string
@@ -1093,6 +1097,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case prLinkMsg:
 		return m.resolvePRLink(msg)
 
+	case prCreatedMsg:
+		return m.handlePRCreated(msg)
+
 	case prScanTickMsg:
 		return m, tea.Batch(m.prScanCmd(), m.prScanTick())
 
@@ -1102,7 +1109,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// session printed scrolls out of its pane long before the work it
 		// names is finished with.
 		for sessID, prURL := range msg.links {
-			if err := m.store.SetSessionPR(sessID, prURL); err != nil && !errors.Is(err, store.ErrSessionGone) {
+			if err := m.store.SetSessionPR(sessID, prURL, prSourceObserved); err != nil && !errors.Is(err, store.ErrSessionGone) {
 				m.errBar.text = "recording the pull request: " + err.Error()
 			}
 		}

@@ -27,6 +27,12 @@ const prTitleWidth = 48
 type prLinkMsg struct {
 	prs  []pullRequest
 	repo string
+	// sessID, root and branch are what opening a new pull request would
+	// need, carried along so the answer "there is none" can offer to make
+	// one without resolving the row a second time.
+	sessID string
+	root   string
+	branch string
 }
 
 // prPickState is the chooser P opens when a branch carries more than one
@@ -70,22 +76,32 @@ func (m *Model) prKey() (tea.Model, tea.Cmd) {
 		m.errBar.text = "no web page for the remote " + remote
 		return m, nil
 	}
-	m.errBar.text = ""
-	// The badge scan has usually already answered for this row, and a key
-	// pressed for a quick look should not wait on the network to be told
-	// again what is already on screen.
-	if prs := m.rowPullRequests(); len(prs) > 0 {
-		return m.resolvePRLink(prLinkMsg{prs: prs, repo: web})
-	}
-
 	repo, err := m.gitDrv.OpenRepo(root)
 	if err != nil {
 		m.errBar.text = err.Error()
 		return m, nil
 	}
+	// A detached or unborn head has no branch to look up and none to open a
+	// pull request from either.
 	branch := repo.Branch
 	if repo.Detached || repo.Unborn {
 		branch = ""
+	}
+	// A group row is a directory, not a piece of work, so nothing can be
+	// recorded against it and creating from it would have nowhere to write.
+	var sessID string
+	if entry, ok := m.selectedRow(); ok && !entry.isGroup {
+		sessID = entry.sess.ID
+	}
+	answer := prLinkMsg{repo: web, sessID: sessID, root: root, branch: branch}
+
+	m.errBar.text = ""
+	// The badge scan has usually already answered for this row, and a key
+	// pressed for a quick look should not wait on the network to be told
+	// again what is already on screen.
+	if prs := m.rowPullRequests(); len(prs) > 0 {
+		answer.prs = prs
+		return m.resolvePRLink(answer)
 	}
 	// A row the scan has not covered yet — one spawned seconds ago, or a
 	// group — asks for itself, which is a network round trip and so waits
@@ -93,7 +109,8 @@ func (m *Model) prKey() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), prLookupTimeout)
 		defer cancel()
-		return prLinkMsg{prs: pullRequestsOn(ctx, root, web, branch), repo: web}
+		answer.prs = pullRequestsOn(ctx, root, web, branch)
+		return answer
 	}
 }
 
@@ -118,13 +135,17 @@ func (m *Model) rowPullRequests() []pullRequest {
 	return nil
 }
 
-// resolvePRLink turns what was found into what happens: nothing opens the
-// repository, one opens itself, and several open the chooser rather than
-// picking for the reader.
+// resolvePRLink turns what was found into what happens: nothing offers to
+// open one, a single pull request opens itself, and several open the chooser
+// rather than picking for the reader.
 func (m *Model) resolvePRLink(msg prLinkMsg) (tea.Model, tea.Cmd) {
 	switch len(msg.prs) {
 	case 0:
-		return m.openPRTarget(msg.repo)
+		// The repository page used to be the whole answer here. It is still
+		// on the card, one key away, but it was always the consolation
+		// prize: a reader pressing P on a session with no pull request is
+		// usually a reader who wants one.
+		return m.openPRCreate(msg.sessID, msg.root, msg.repo, msg.branch)
 	case 1:
 		return m.openPRTarget(msg.prs[0].URL)
 	}

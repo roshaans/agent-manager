@@ -17,7 +17,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `p` | Run a project script from `.agent-manager/settings.toml` in the row's directory, or offer to create the file when the project has none ([Project settings](project-settings.md)) |
 | `o` | Open the selected row's directory in your editor |
 | `O` | Show what this worktree is running: its server in a browser, or a TUI run session's pane |
-| `P` | Open the row's branch on its remote: the pull request when the branch has one, the repository's own page when it does not, and a picker when the branch carries several ([Pull requests](#pull-requests)) |
+| `P` | Open the session's pull request; offer to open one when it has none, and pick when it has several ([Pull requests](#pull-requests)) |
 | `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
 | `Y` | Copy the selected row's directory to the clipboard: a session's checkout — its worktree, when it has one — or a group's default path |
 | `i` | The rules the selected session runs under: the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` its tool reads, read in place or opened in your editor ([Agent rules](#agent-rules)) |
@@ -115,20 +115,24 @@ lazygit has to be on `PATH` — nothing is configurable here, and the status lin
 
 ## Pull requests
 
-A session with an open pull request wears its number: `#328` beside the name, dimmed and marked `↑` while the pull request is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with no pull request opens the repository's own page instead, so `P` answers "show me this on the remote" either side of the moment a pull request gets opened; one with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository.
+A session with an open pull request wears its number: `#328` beside the name, dimmed and marked `↑` while the pull request is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
+
+`P` on a session with **no** pull request offers to open one: `↵` pushes the branch and creates it, titled from its commits, in the repository the branch was pushed to. `r` opens the repository page, which is what `P` used to do here on its own. Creating it this way is the only moment the link between a session and its pull request is a fact rather than a reading — everything below is working out after the event what this knows at it.
 
 ### Which pull request belongs to a session
 
-Two things, in this order:
+Four sources, each adding what the ones before it missed:
 
-1. **What the session printed.** Each pass reads the last of the session's scrollback for a pull request address and records it against that session. An agent almost always prints the URL when it opens one, so this needs no cooperation from the tool — and it is the only thing that works when the agent pushed a branch it never checked out, which a careful one does so your working tree is left as you had it. Only addresses on the session's own repository or its parent count, so a pull request someone pasted in to ask about does not become the session's own.
-2. **What its branch is on.** Any open pull request whose head is the branch the session's checkout sits on. A session that opened one elsewhere has not stopped working on its branch, so both show; the one it produced leads, and is what `P` opens first.
+1. **Created.** The manager opened the pull request itself. A fact, not a guess.
+2. **Commit.** Any pull request containing the session's current commit. A commit either is in a pull request or is not, which is what a branch name cannot tell you: a name is a label two forks can both be using, and a rename detaches it from the pull request it belonged to.
+3. **Branch.** Any open pull request whose head is the branch the session's checkout sits on. A label, and only as good as labels are.
+4. **Printed.** An address the session put on screen, recorded so it survives scrolling away. An agent almost always prints the URL when it opens one, so this catches a pull request made outside the manager — including one on a branch nobody checked out. It comes last because a session asked to *look at* somebody else's pull request prints that address too, and a reading must never displace a commit that says otherwise. Only addresses on the session's own repository or its parent count at all.
 
-The link from step 1 is written to the session and outlives the manager run, because what a session printed scrolls out of its pane long before the work it names is finished with. The titles and states are not stored — those are re-read every pass, so a badge is never a stale claim. A pull request that has been merged stops wearing a badge, since the badge is for work in flight, but `P` still opens it: it is still what that session produced.
+A session that opened a pull request somewhere else has not stopped working on the branch it is sitting on, so it keeps both; the source that knows most leads, and is what `P` opens.
 
-The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Each repository is listed once per pass no matter how many sessions or worktrees sit in it, so a dozen agents on one repo cost one pass and not a dozen. Without `gh` — or signed out of it, or on a host it does not know — no badges appear and `P` opens the repository page. Nothing is cached to disk: a badge is a claim about GitHub right now, not a note from last week.
+The created and printed links are written to the session and outlive the manager run, because what a session printed scrolls out of its pane long before the work it names is finished with. The titles and states are not stored — those are re-read every pass, so a badge is never a stale claim. A pull request that has been merged stops wearing a badge, since the badge is for work in flight, but `P` still opens it: it is still what that session produced.
 
-Branches are matched by name against the repository's open pull requests rather than asked after one at a time, which is what makes work pushed to a fork show up: `gh` resolves a branch named as an argument against the repository the pull request would merge into, and so never finds it.
+The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Each repository is listed once per pass no matter how many sessions or worktrees sit in it, and sessions sharing a checkout share the one commit lookup, so a dozen agents on one repo cost one pass and not a dozen. Without `gh` — or signed out of it, or on a host it does not know — no badges appear and `P` opens the repository page. Nothing is cached to disk except the link itself.
 
 A checkout whose `origin` is a fork is read twice per pass — once naming that fork, once letting `gh` resolve the repository itself, which always answers with the parent. Both are needed, because a fork holds pull requests either way round: opened against the parent, a pull request lives upstream, and opened against the fork it lives on the fork. A checkout that is nobody's fork answers both the same way and the repeats are dropped.
 

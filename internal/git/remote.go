@@ -31,6 +31,14 @@ func (d *Driver) RemoteURL(root string) (string, error) {
 	return "", ErrNoRemote
 }
 
+// HeadSHA is the commit a checkout is on, in full. A pull request is found
+// through it rather than through the branch's name: a name is a label two
+// forks can both use and a rename can detach, where a commit either is in a
+// pull request or is not.
+func (d *Driver) HeadSHA(root string) (string, error) {
+	return d.run(root, "rev-parse", "HEAD")
+}
+
 // scpRemote is git's scp-style address: an optional user, a host, a colon,
 // and the path. It is only tried once a URL scheme has been ruled out, since
 // the colon in https:// would otherwise read as that separator.

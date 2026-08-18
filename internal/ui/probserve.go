@@ -51,6 +51,16 @@ func observePR(pane string, allowed []string) string {
 	return ""
 }
 
+// prRepoSlug is the owner and name a repository address carries, which is
+// what an API path is built from.
+func prRepoSlug(repoURL string) string {
+	parsed, err := url.Parse(repoURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return strings.Trim(parsed.Path, "/")
+}
+
 // prNumberOf is the number at the end of a pull request address, for a
 // recorded link nothing has yet been read back about.
 func prNumberOf(prURL string) int {

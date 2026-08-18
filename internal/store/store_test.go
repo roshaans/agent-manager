@@ -1103,7 +1103,7 @@ func TestSessionPRRoundTrips(t *testing.T) {
 	}
 	url := "https://github.com/me/fork/pull/2"
 
-	if err := st.SetSessionPR("a", url); err != nil {
+	if err := st.SetSessionPR("a", url, "created"); err != nil {
 		t.Fatalf("SetSessionPR: %v", err)
 	}
 
@@ -1111,8 +1111,8 @@ func TestSessionPRRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if sess.PRURL != url {
-		t.Fatalf("PRURL = %q, want %q", sess.PRURL, url)
+	if sess.PRURL != url || sess.PRSource != "created" {
+		t.Fatalf("PRURL/PRSource = %q/%q, want %q/created", sess.PRURL, sess.PRSource, url)
 	}
 	listed, err := st.ListSessions(false)
 	if err != nil {
@@ -1124,7 +1124,7 @@ func TestSessionPRRoundTrips(t *testing.T) {
 
 	// A link set by mistake has to be removable, and clearing must not read
 	// as a session that vanished.
-	if err := st.SetSessionPR("a", ""); err != nil {
+	if err := st.SetSessionPR("a", "", ""); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	if sess, _ := st.Get("a"); sess.PRURL != "" {
@@ -1134,7 +1134,7 @@ func TestSessionPRRoundTrips(t *testing.T) {
 
 func TestSessionPROnAGoneSession(t *testing.T) {
 	st := newTestStore(t)
-	if err := st.SetSessionPR("nobody", "https://x/y/z/pull/1"); !errors.Is(err, ErrSessionGone) {
+	if err := st.SetSessionPR("nobody", "https://x/y/z/pull/1", "created"); !errors.Is(err, ErrSessionGone) {
 		t.Fatalf("SetSessionPR on a missing session = %v, want ErrSessionGone", err)
 	}
 }
