@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -545,7 +546,13 @@ func (m *Model) renderSessionEntry(entry treeRow, selected bool, width int, pad,
 	if selected {
 		nameStyle = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 	}
-	head := pad + guides + dot + " " + nameStyle.Render(m.displayName(sess))
+	// Printed only where there is a sibling to tell a chat from, and always
+	// the number the jump keys take.
+	number := ""
+	if n := m.chatNumber(sess); n > 0 {
+		number = chatNumberStyle.Render(strconv.Itoa(n)) + " "
+	}
+	head := pad + guides + dot + " " + number + nameStyle.Render(m.displayName(sess))
 	if chip := m.prChip(sess); chip != "" {
 		head += " " + chip
 	}
@@ -709,6 +716,7 @@ func (m *Model) contentLines(width, height int) []contentLine {
 	}
 	body := ours(splitLines(m.viewDetail(inner)))
 	rest := height - len(body) - len(bar) - 1
+	strip, stripFits := m.chatStripFits(inner, rest)
 	if rest >= 3 {
 		if group, ok := m.selectedGroup(); ok {
 			body = append(body, contentLine{rule: true})
@@ -719,6 +727,13 @@ func (m *Model) contentLines(width, height int) []contentLine {
 				separator = contentLine{text: focusTopRule(width), raw: true}
 			}
 			body = append(body, separator)
+			// The strip sits between the rule and the pane, so the row of
+			// conversations reads as a header on the one below it rather
+			// than as the first line the agent printed.
+			if stripFits {
+				body = append(body, contentLine{text: gutter + strip})
+				rest--
+			}
 			m.previewBodyOffset = len(body)
 			body = append(body, m.previewLines(width, rest, gutter)...)
 		}
@@ -727,6 +742,85 @@ func (m *Model) contentLines(width, height int) []contentLine {
 		body = append(body, contentLine{})
 	}
 	return append(body[:max(height-len(bar), 0)], bar...)
+}
+
+// chatStripFits is the only place that decides whether the content column
+// gives the chat strip a line. previewPaneHeight sizes tmux from the same
+// answer contentLines lays the frame out from, so an agent never draws into
+// a row the panel has no room to paint. A column down to its last three rows
+// keeps them all for the pane.
+func (m *Model) chatStripFits(inner, rest int) (string, bool) {
+	strip := m.chatStrip(inner)
+	return strip, strip != "" && rest > 3
+}
+
+// chatStrip is the line above the pane naming every conversation open on the
+// checkout under the cursor, with the number each one answers to, so the jump
+// keys are discoverable where the reader already is. A checkout with nothing
+// to switch between draws no strip, and loses no room to a feature it is not
+// using.
+func (m *Model) chatStrip(width int) string {
+	sess, ok := m.selected()
+	if !ok || width < 20 {
+		return ""
+	}
+	chats := m.chatFamily(m.chatRoot(sess))
+	if len(chats) < 2 {
+		return ""
+	}
+	// The keys are the last thing to go, so detail is given up in order:
+	// the branch, then the names of the chats the reader is not in, then the
+	// hint's second half.
+	lefts := []string{
+		m.chatStripRow(chats, sess.ID, true, true),
+		m.chatStripRow(chats, sess.ID, false, true),
+		m.chatStripRow(chats, sess.ID, true, false),
+		m.chatStripRow(chats, sess.ID, false, false),
+	}
+	// Shift+arrow first: it is the pair that works whatever the terminal
+	// does with Option.
+	hints := []string{
+		subtleStyle.Render(fmt.Sprintf("shift+←→ · alt+1…%d", len(chats))),
+		subtleStyle.Render("shift+←→"),
+	}
+	for _, left := range lefts {
+		for _, hint := range hints {
+			if gap := width - ansi.StringWidth(left) - ansi.StringWidth(hint); gap >= 2 {
+				return left + strings.Repeat(" ", gap) + hint
+			}
+		}
+	}
+	return ansi.Truncate(lefts[len(lefts)-1], width, "…")
+}
+
+// chatStripRow lays out the strip's conversations at one level of detail:
+// scoped prints the branch they share, named the name of every chat rather
+// than of the one the cursor is in. Dropping a name still leaves its number
+// and its state, which is what the key needs.
+func (m *Model) chatStripRow(chats []store.Session, currentID string, scoped, named bool) string {
+	var parts []string
+	if scoped {
+		// The branch is what the conversations have in common; a checkout in
+		// a plain directory falls back to the name of the chat that opened it.
+		scope := chats[0].Name
+		if chats[0].WorktreeBranch != "" {
+			scope = "⑂ " + chats[0].WorktreeBranch
+		}
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorAccent2).Render(scope))
+	}
+	for i, chat := range chats {
+		current := chat.ID == currentID
+		glyph := lipgloss.NewStyle().Foreground(statusColor(chat.Status)).Render(statusGlyph(chat.Status))
+		label := chatNumberStyle.Render(strconv.Itoa(i + 1))
+		switch {
+		case current:
+			label += " " + lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render(m.displayName(chat))
+		case named:
+			label += " " + mutedStyle.Render(m.displayName(chat))
+		}
+		parts = append(parts, glyph+" "+label)
+	}
+	return strings.Join(parts, "   ")
 }
 
 // focusTopRule is the hairline that caps the focused pane, titled so the

@@ -47,6 +47,13 @@ var helpDocumentedBy = map[string]string{
 	"shift+p": "P",
 	// Ctrl+C quits from every mode, so it belongs to no one context.
 	"ctrl+c": "q",
+	// The chat pair is written the way it is pressed, with the arrows drawn
+	// rather than spelled.
+	"shift+right": "shift+←→", "shift+left": "shift+←→",
+	// The chat numbers are one row: nine of them written out would push the
+	// keys around them off the card for nothing.
+	"1": "1…9", "2": "1…9", "3": "1…9", "4": "1…9", "5": "1…9",
+	"6": "1…9", "7": "1…9", "8": "1…9", "9": "1…9",
 }
 
 var caseLiteral = regexp.MustCompile(`case ((?:"(?:[^"\\]|\\.)*"(?:, )?)+):`)

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -13,29 +12,42 @@ import (
 )
 
 // renameSessionWorktree moves a session's worktree and branch onto its new
-// name, so a session named after the work it ended up doing is reviewed
-// under that name too. Sessions running in a shared directory have nothing
-// to move. The session's own fields are updated in place, leaving the
-// caller a session that already knows where it runs.
-func renameSessionWorktree(gitDrv *git.Driver, st *store.Store, sess *store.Session, name string) error {
+// name, so work reviewed under the name its session ended up with is on a
+// branch called the same thing.
+//
+// A directory shared with anything else stays where it is. A worktree is
+// named for the session it was created for, and a chat, a fork or a terminal
+// opened beside that one is not what it is named after — nor is it something
+// to move out from under.
+//
+// A rename that cannot move the directory is still a rename. skipped names
+// the reason for a caller to pass on, and the error is kept for a move that
+// was attempted and failed, so nobody loses a name they typed to a branch
+// that could not follow it. Refusing the rename outright, which is what this
+// used to do, meant one terminal opened on a worktree session was enough to
+// stop that session from ever taking a name again — its own agent's included.
+//
+// The session's own fields are updated in place, leaving the caller a session
+// that already knows where it runs.
+func renameSessionWorktree(gitDrv *git.Driver, st *store.Store, sess *store.Session, name string) (skipped string, err error) {
 	if gitDrv == nil || sess.WorktreeRepo == "" || sess.WorktreeBranch == "" {
-		return nil
+		return "", nil
 	}
 	sessions, err := st.ListSessions(true)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, other := range sessions {
 		if other.ID != sess.ID && other.Cwd == sess.Cwd {
-			return fmt.Errorf("worktree is shared with session %q", other.Name)
+			return "renamed, but the worktree is shared with " + other.Name + " and stays put", nil
 		}
 	}
 	path, branch, err := gitDrv.MoveWorktree(sess.WorktreeRepo, sess.Cwd, sess.WorktreeBranch, name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if path == sess.Cwd && branch == sess.WorktreeBranch {
-		return nil
+		return "", nil
 	}
 	if err := st.MoveSessionWorktree(sess.ID, path, branch); err != nil {
 		// The directory already moved, so put it back rather than leave the
@@ -43,10 +55,10 @@ func renameSessionWorktree(gitDrv *git.Driver, st *store.Store, sess *store.Sess
 		// is named for the session it held, which is the name that rebuilds
 		// the pair it was moved from.
 		_, _, _ = gitDrv.MoveWorktree(sess.WorktreeRepo, path, branch, filepath.Base(sess.Cwd))
-		return err
+		return "", err
 	}
 	sess.Cwd, sess.WorktreeBranch = path, branch
-	return nil
+	return "", nil
 }
 
 func (m *Model) openRename() {
@@ -264,11 +276,14 @@ func (m *Model) applyRename() (tea.Model, tea.Cmd) {
 		// The worktree moves before the name is stored, so a directory or
 		// branch the new name cannot have leaves the rename card open with
 		// the reason instead of splitting the two apart.
+		note := ""
 		if index >= 0 {
-			if err := renameSessionWorktree(m.gitDrv, m.store, &m.sessions[index], name); err != nil {
+			skipped, err := renameSessionWorktree(m.gitDrv, m.store, &m.sessions[index], name)
+			if err != nil {
 				m.errBar.text = "worktree rename: " + err.Error()
 				return m, nil
 			}
+			note = skipped
 		}
 		if err := m.store.RenameSession(m.rename.sessID, name); err != nil {
 			m.errBar.text = err.Error()
@@ -294,6 +309,9 @@ func (m *Model) applyRename() (tea.Model, tea.Cmd) {
 			}
 		}
 		m.relabelSession(m.rename.sessID)
+		// The row took the name either way, so a branch that could not
+		// follow it is a note rather than a failure.
+		m.errBar.text = note
 	}
 	m.rebuildRows()
 	m.mode = modeList

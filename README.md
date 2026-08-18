@@ -29,6 +29,8 @@ Instead of hunting through terminal tabs to see which agent is done and which is
 
 Press `f` on a session to continue its conversation in a separate named fork.
 
+`c` is the same thing without the context: a fresh conversation on the checkout the session is already working in, no second worktree, no setup re-run. The rail draws a checkout's conversations as one block, and `shift+←` / `shift+→` step between them from the list or from inside a pane, without giving up the keyboard.
+
 `i` opens the rules a session actually runs under — the `CLAUDE.md`, `AGENTS.md` or `GEMINI.md` its own tool reads, project and global — to read in place or edit, so what an agent was told before its first turn is one key away rather than a file you have to remember the name of.
 
 The tools you use alongside agents live in the same list: `T` opens a plain shell tab in the selected group for builds, Git, and one-off commands.

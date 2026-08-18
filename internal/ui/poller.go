@@ -536,7 +536,10 @@ func (p *poller) applyPendingRename(sess *store.Session) error {
 		return nil
 	}
 	if name != "" && name != sess.Name {
-		if err := renameSessionWorktree(p.gitDrv, p.store, sess, name); err != nil {
+		// A skipped move is not reported from here: the agent asked for a
+		// name, not for a branch, and the poll that carries the answer has
+		// nowhere to say so that would not repeat every two seconds.
+		if _, err := renameSessionWorktree(p.gitDrv, p.store, sess, name); err != nil {
 			_ = p.hooks.RemoveName(sess.ID)
 			return fmt.Errorf("worktree rename: %w", err)
 		}

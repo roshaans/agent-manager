@@ -50,6 +50,7 @@ var (
 	chipStyle             lipgloss.Style
 	imageChipStyle        lipgloss.Style
 	imageChipPastingStyle lipgloss.Style
+	chatNumberStyle       lipgloss.Style
 
 	legendTitleStyle lipgloss.Style
 	legendBadgeStyle lipgloss.Style
@@ -84,6 +85,10 @@ func rebuildStyles() {
 	imageChipPastingStyle = lipgloss.NewStyle().
 		Foreground(colorWorking).
 		Background(colorSurface)
+	// A chat's number is a key hint sitting in a name column, so it takes
+	// the color every other key hint does while staying quiet enough that a
+	// column of rows still reads by name.
+	chatNumberStyle = lipgloss.NewStyle().Foreground(colorAccent)
 
 	legendTitleStyle = lipgloss.NewStyle().Foreground(colorSubtle).Bold(true)
 	legendBadgeStyle = lipgloss.NewStyle().

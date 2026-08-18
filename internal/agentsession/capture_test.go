@@ -300,3 +300,36 @@ func TestSessionFileRefusesStoresWithoutAFile(t *testing.T) {
 		t.Error(`SupportsSessionFile("gemini") = false`)
 	}
 }
+
+// An id is not evidence of a conversation: a tool handed its id at spawn
+// carries one from its first frame and writes nothing until the first turn.
+func TestConversationExistsForClaude(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	project := filepath.Join(dir, "projects", "-Users-someone-code-api")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "90b0c5ed-16e7-4de9-b355-9749f676d0cf"
+	if err := os.WriteFile(filepath.Join(project, id+".jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if exists, known := ConversationExists("claude", id); !known || !exists {
+		t.Fatalf("a written conversation read as (%v, %v), want (true, true)", exists, known)
+	}
+	// The same id under a project directory nobody can name still answers,
+	// because the lookup does not rebuild the directory's name.
+	if exists, known := ConversationExists("claude", "11111111-2222-3333-4444-555555555555"); !known || exists {
+		t.Fatalf("a minted-but-unused id read as (%v, %v), want (false, true)", exists, known)
+	}
+	// A store with no cheap lookup, and an empty id, both mean "no opinion" —
+	// never "no conversation", which would block a fork that is perfectly fine.
+	for _, c := range []struct{ store, id string }{
+		{"codex", id}, {"opencode", id}, {"gemini", id}, {"hermes", id}, {"", id}, {"claude", ""},
+	} {
+		if _, known := ConversationExists(c.store, c.id); known {
+			t.Fatalf("session_store %q with id %q claimed an opinion it cannot have", c.store, c.id)
+		}
+	}
+}

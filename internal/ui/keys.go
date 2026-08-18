@@ -166,6 +166,16 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.requestRefresh()
 	case "T", "shift+t":
 		return m.terminalKey()
+	case "c":
+		return m.chatKey()
+	case "tab", "shift+right":
+		return m.cycleChat(1)
+	case "shift+tab", "shift+left":
+		return m.cycleChat(-1)
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// The list has no prompt for a digit to be a character in, so the
+		// number beside a chat reaches it here with nothing in front of it.
+		return m.jumpChat(int(msg.String()[0] - '0'))
 	case "p":
 		return m.runKey()
 	case "i":

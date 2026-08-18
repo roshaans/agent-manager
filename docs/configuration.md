@@ -26,7 +26,7 @@ Rules match top-down against the visible pane text; first match wins, and `defau
 
 **Status detection.** Optional per-tool fields refine it: `activity_cutoff` (regex locating the tool's input box, everything above it is turn content), `turn_end` (a turn-summary line marking the turn as over), `busy_line` (work that outlives its turn, such as background agents and shells), `limit_line` (a usage or rate-limit banner; the session is `errored`), `chrome_line`, `blocked_line`, and `trailing_note`. `status_source = "claude-hooks"` switches status to Claude Code hook events (see [Status](usage.md#status)). The generated config's `claude` and `opencode` blocks show all of them in use.
 
-**Revive.** `resume_by_id_command` resumes one exact conversation, with `{id}` replaced by the session's captured agent id. That id comes either from launching under an id the manager mints (`session_id_flag`, e.g. `--session-id`) or from reading back an id the tool minted itself (`session_store = "codex" | "opencode" | "gemini" | "hermes"`). `revive_command` is what `v` falls back to when no id is available, e.g. `claude --continue`.
+**Revive.** `resume_by_id_command` resumes one exact conversation, with `{id}` replaced by the session's captured agent id. That id comes either from launching under an id the manager mints (`session_id_flag`, e.g. `--session-id`) or from reading back an id the tool minted itself (`session_store = "codex" | "opencode" | "gemini" | "hermes"`). `session_store` names the on-disk layout a tool keeps conversations in, so it is also set for tools that launch under a minted id (`session_store = "claude"`): there it is what lets a fork tell an id with a conversation behind it from one that was only just handed out. `revive_command` is what `v` falls back to when no id is available, e.g. `claude --continue`.
 
 **Forks.** `fork_command` creates a conversation from an existing session. Agent Manager replaces and shell-quotes these placeholders:
 
@@ -34,6 +34,8 @@ Rules match top-down against the visible pane text; first match wins, and `defau
 - `{session_file}`: The source conversation's file on disk, for a tool that forks by loading a file (Gemini CLI: `gemini --session-file`). Available with `session_store = "gemini"`.
 - `{new_id}`: A new UUID that Agent Manager records for exact revival.
 - `{name}`: The new Agent Manager session name.
+
+A fork is refused when the source has not started a conversation yet — a session launched under a minted id has that id from its first frame, and resuming it would land the new pane on the tool's own "no conversation found". The check needs `session_store` to know where to look; a tool without one is never blocked.
 
 A `fork_command` references its source through `{id}` or `{session_file}`, so one of those two is required. Claude Code, Codex and Gemini CLI include default fork commands. A custom tool can omit `{new_id}` when its `session_store` captures the generated ID.
 

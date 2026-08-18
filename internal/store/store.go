@@ -48,9 +48,9 @@ type Session struct {
 	WorktreeBranch string
 	// ParentID is the session this one was opened from: for a shell, so it
 	// stays attributable to the worktree it was spawned for even after it is
-	// cd'd somewhere else; for an agent, whoever asked for it. Empty for a
-	// session a human started and for shells opened on a group. Only the
-	// shells are nested under it in the list.
+	// cd'd somewhere else; for a chat or a fork, the conversation it was
+	// started beside. Empty for a session a human started and for shells
+	// opened on a group. It is what the list nests a row under.
 	ParentID string
 	// RunScript names the project script this session was started by, empty
 	// for every session a human named. It is what tells one worktree's dev
@@ -767,6 +767,27 @@ func (s *Store) RenameSession(id, name string) error {
 // there. The repo root the worktree hangs off stays as it was.
 func (s *Store) MoveSessionWorktree(id, cwd, branch string) error {
 	res, err := s.db.Exec(`UPDATE sessions SET cwd = ?, worktree_branch = ? WHERE id = ?`, cwd, branch, id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res, id)
+}
+
+// AdoptChildren re-points every session opened from one session at somewhere
+// else, for a row about to be deleted. A chat, a fork or a terminal opened
+// beside the conversation being removed still belongs to the same checkout,
+// and the link is what says so: left dangling, the rail would scatter a
+// family across its group the moment its first member went.
+func (s *Store) AdoptChildren(id, newParent string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET parent_id = ? WHERE parent_id = ?`, newParent, id)
+	return err
+}
+
+// SetParent records the session a row was opened from. Used to promote one
+// of a deleted session's children into its place, so what is left of a
+// family still hangs together.
+func (s *Store) SetParent(id, parent string) error {
+	res, err := s.db.Exec(`UPDATE sessions SET parent_id = ? WHERE id = ?`, parent, id)
 	if err != nil {
 		return err
 	}

@@ -95,6 +95,14 @@ type Model struct {
 	// shellParents maps a shell to the session it hangs off, rebuilt with the
 	// rows so the nesting and the rows agree about what the view is showing.
 	shellParents map[string]string
+	// chatOrder lists each checkout's chats in the order the rail draws and
+	// the keys number them, chatHeads maps a chat to the conversation whose
+	// block it is drawn in, and chatNumbers each chat of a family larger than
+	// one to the number the rail prints beside it. All three are rebuilt with
+	// the rows, so what is numbered is what is on screen.
+	chatOrder   map[string][]string
+	chatHeads   map[string]string
+	chatNumbers map[string]int
 
 	groups         []string
 	groupPaths     map[string]string
@@ -225,11 +233,12 @@ type Model struct {
 	// settle timers with an older gen are dropped so key-repeat cannot
 	// queue a second of tmux work after the user stops.
 	previewGen uint64
-	// terminalKeyAt is when the last T finished being handled. Held down it
-	// autorepeats into a burst of keystrokes, and T is the only key that
-	// spawns on the keystroke itself rather than opening a form that would
-	// swallow them.
+	// terminalKeyAt is when the last T finished being handled, and chatKeyAt
+	// the last c. Held down they autorepeat into a burst of keystrokes, and
+	// they are the only keys that spawn on the keystroke itself rather than
+	// opening a form that would swallow them.
 	terminalKeyAt time.Time
+	chatKeyAt     time.Time
 
 	// bannerPhase advances the wordmark's current sweep and then rests, so
 	// the frame is not repainted forever.
@@ -1673,11 +1682,13 @@ func (m *Model) rebuildRows() {
 		kept = append(kept, sess)
 	}
 	m.shellParents = m.shellParentIndex(kept)
+	m.chatOrder, m.chatHeads, m.chatNumbers = m.chatIndex(kept)
 
 	// m.sessions arrives ordered by the store (group, sort_order), so
 	// per-group slices inherit the user's manual order.
 	sessionsByGroup := map[string][]store.Session{}
 	shellsBySession := map[string][]store.Session{}
+	chatsByHead := map[string][]store.Session{}
 	var shells []store.Session
 	for _, sess := range kept {
 		// Out of the group map as well as out of the tree, so a group whose
@@ -1691,6 +1702,13 @@ func (m *Model) rebuildRows() {
 		// something to work out from a name. One without stays in its group.
 		if parent := m.shellParents[sess.ID]; parent != "" {
 			shellsBySession[parent] = append(shellsBySession[parent], sess)
+			continue
+		}
+		// The other chats on a checkout gather under the first one, so one
+		// checkout reads as one block however many conversations are open on
+		// it — the same nesting a terminal already gets, from the same link.
+		if head := m.chatHeads[sess.ID]; head != "" {
+			chatsByHead[head] = append(chatsByHead[head], sess)
 			continue
 		}
 		sessionsByGroup[sess.Group] = append(sessionsByGroup[sess.Group], sess)
@@ -1737,8 +1755,14 @@ func (m *Model) rebuildRows() {
 	// A shell sits immediately after its session rather than at the end of
 	// the group: the tree guides read depth off the rows around them, so a
 	// child separated from its parent draws a branch off whoever precedes it.
-	emit := func(sess store.Session, depth int) {
+	// A checkout's other chats come first and its shells after, so the
+	// conversations read as peers and the terminals as subordinates.
+	var emit func(sess store.Session, depth int)
+	emit = func(sess store.Session, depth int) {
 		rows = append(rows, treeRow{sess: sess, depth: depth})
+		for _, chat := range chatsByHead[sess.ID] {
+			emit(chat, depth+1)
+		}
 		for _, shell := range shellsBySession[sess.ID] {
 			rows = append(rows, treeRow{sess: shell, depth: depth + 1})
 		}

@@ -742,6 +742,14 @@ func (m *Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				delete(m.pickedRepos, sess.ID)
 				delete(m.awaitedRenames, sess.ID)
+				// The conversations opened beside this one are still on the
+				// same checkout, so the family closes ranks rather than
+				// scattering across its group: the eldest of them takes the
+				// deleted row's place, and the rest hang off it.
+				if err := m.adoptChildrenOf(sess); err != nil {
+					m.errBar.text = err.Error()
+					return m, nil
+				}
 				if err := m.store.Delete(sess.ID); err != nil {
 					m.errBar.text = err.Error()
 					return m, nil

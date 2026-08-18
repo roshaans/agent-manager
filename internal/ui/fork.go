@@ -44,6 +44,10 @@ func (m *Model) openFork() {
 		m.errBar.text = err.Error()
 		return
 	}
+	if err := forkHasSomethingToResume(tool, entry.sess); err != nil {
+		m.errBar.text = err.Error()
+		return
+	}
 	name := textField("fork name", 60)
 	name.SetValue(entry.sess.Name + "-fork")
 	name.CursorEnd()
@@ -87,6 +91,10 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 		m.errBar.text = err.Error()
 		return m, nil
 	}
+	if err := forkHasSomethingToResume(tool, source); err != nil {
+		m.errBar.text = err.Error()
+		return m, nil
+	}
 	if !isDir(source.Cwd) {
 		m.errBar.text = "working directory no longer exists: " + source.Cwd
 		return m, nil
@@ -117,6 +125,17 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 		AgentSessionID: agentID,
 		WorktreeRepo:   source.WorktreeRepo,
 		WorktreeBranch: source.WorktreeBranch,
+		// A fork and a fresh chat are the same shape — a new conversation on
+		// the checkout the source is working in — so both record where they
+		// were opened from, and the rail draws them as the one family they
+		// are. The context is the only thing that differs: this one carries
+		// it, c starts without it.
+		//
+		// The link records the session actually forked from, not the family's
+		// first: which conversation this one came out of is a fact worth
+		// keeping, and flattening it into one block is the rail's job, not
+		// the store's.
+		ParentID: source.ID,
 	}
 	m.errBar.text = ""
 	if err := m.launchNewSession(forked, tool, baseCommand, spawn.LaunchOptions{}); err != nil {
@@ -150,6 +169,24 @@ func validateForkSource(toolName string, tool config.Tool, source store.Session)
 	}
 	if source.AgentSessionID == "" {
 		return fmt.Errorf("%s has no captured conversation id", source.Name)
+	}
+	return nil
+}
+
+// conversationExists is the seam tests swap to exercise both answers without
+// a real conversation store on disk.
+var conversationExists = agentsession.ConversationExists
+
+// forkHasSomethingToResume is asked separately from validateForkSource,
+// which answers whether a tool is configured to fork at all. This one is
+// about the session in front of us: a tool handed its id at spawn carries
+// one from its first frame, while the conversation behind it only exists
+// once the agent has taken a turn. Forking that id lands the new pane on the
+// tool's own "no conversation found", which is a worse answer than this one
+// and arrives somewhere harder to read.
+func forkHasSomethingToResume(tool config.Tool, source store.Session) error {
+	if exists, known := conversationExists(tool.SessionStore, source.AgentSessionID); known && !exists {
+		return fmt.Errorf("%s has not started a conversation yet - send it a prompt first", source.Name)
 	}
 	return nil
 }

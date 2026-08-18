@@ -128,12 +128,15 @@ func (m *Model) previewPaneHeight() int {
 	if m.quick.active {
 		avail -= lipgloss.Height(m.viewQuickBar(inner)) + 1
 	}
-	// Mirrors contentLines: the detail head, the seam, then the pane
-	// filling everything below.
+	// Mirrors contentLines: the detail head, the seam, the chat strip where
+	// there is one, then the pane filling everything below.
 	rest := avail - lipgloss.Height(m.viewDetail(inner)) - 1
 	if rest < 3 {
 		// Preview section is hidden; keep a tiny pane for create/attach paths.
 		return 3
+	}
+	if _, fits := m.chatStripFits(inner, rest); fits {
+		rest--
 	}
 	return rest
 }
@@ -466,6 +469,12 @@ func (m *Model) viewFooter() string {
 			// the key map, where there is room to name all three.
 			{"drag / click", "copy"},
 		}
+		if sess, ok := m.selected(); ok && len(m.chatFamily(m.chatRoot(sess))) > 1 {
+			// Named before the mouse gestures: switching conversations is
+			// the reason the reader is looking at this tier at all, and the
+			// tier is cut from the right on a narrow terminal.
+			pairs = append(pairs, [2]string{"shift+←→", "chat"})
+		}
 		if m.pane.mouse {
 			pairs = append(pairs, [2]string{"click / alt+drag", "agent UI"})
 		}
@@ -498,11 +507,19 @@ func (m *Model) rowLegend() legendSection {
 		}}
 	}
 	title := "Session"
-	conversation := [][2]string{{"space", "prompt"}, {"ctrl+r", "review"}, {"f", "fork"}}
+	conversation := [][2]string{{"space", "prompt"}, {"ctrl+r", "review"}, {"f", "fork"}, {"c", "new chat"}}
 	if m.isShell(row.sess.Tool) {
 		// A shell has no conversation, so the keys that would prompt,
 		// review or fork one are left off rather than offered and refused.
-		title, conversation = "Shell", nil
+		// c stays: a terminal knows the checkout it was opened in, and
+		// another conversation there is exactly what it cannot start itself.
+		title, conversation = "Shell", [][2]string{{"c", "new chat"}}
+	}
+	// The key that moves between chats is only named where there is another
+	// chat to move to, so a legend already fighting for a row does not spend
+	// one on a key that would answer with a refusal.
+	if len(m.chatFamily(m.chatRoot(row.sess))) > 1 {
+		conversation = append(conversation, [2]string{"tab", "next chat"})
 	}
 	pairs := [][2]string{{"↵", enterHint}, {"A", attachHint}}
 	if row.sess.Status == status.Finished && !row.sess.Archived {

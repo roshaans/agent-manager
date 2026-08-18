@@ -38,9 +38,13 @@ type Tool struct {
 	// can use {id}, {session_file}, {new_id}, and {name}; Agent Manager quotes
 	// each value. {session_file} needs SessionStore to keep one ("gemini").
 	ForkCommand string `toml:"fork_command"`
-	// SessionStore names the built-in capturer that reads back the id a tool
-	// minted itself when it has no SessionIDFlag ("codex", "opencode",
-	// "gemini" or "hermes").
+	// SessionStore names the on-disk layout this tool keeps conversations in
+	// ("claude", "codex", "opencode", "gemini" or "hermes"). It selects the
+	// built-in capturer that reads back the id a tool minted itself when it
+	// has no SessionIDFlag, and it is also what lets a fork check that the
+	// conversation it is about to resume is actually there — which is a
+	// different question for a tool that is handed its id at spawn, since
+	// that id exists from the first frame and the conversation does not.
 	SessionStore string `toml:"session_store"`
 	// MCP picks how the agent-manager MCP server is registered into this
 	// tool's sessions: "claude", "codex", "opencode", "grok", "gemini",
@@ -392,6 +396,9 @@ rules_files = ["CLAUDE.md", "CLAUDE.local.md", "~/.claude/CLAUDE.md"]
 # revive (v) launches a new session with this id, so it can later resume
 # that exact conversation regardless of what else ran in the directory
 session_id_flag = "--session-id"
+# where its conversations live, so a fork can tell an id that has a
+# conversation behind it from one that was only just minted
+session_store = "claude"
 resume_by_id_command = "claude --resume {id}"
 fork_command = "claude --resume {id} --fork-session --session-id {new_id} --name {name}"
 # fallback when a session predates id tracking: resumes the last conversation there

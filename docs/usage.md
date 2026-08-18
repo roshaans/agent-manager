@@ -14,6 +14,11 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 |-----|--------|
 | `n` | New session (name, tool, directory, worktree toggle, optional starting prompt, group picker) |
 | `T` | New terminal tab: a plain shell in the selected group, with no agent in it |
+| `c` | A fork without the context: a fresh conversation on the checkout under the cursor, same CLI and branch ([Several chats on one checkout](#several-chats-on-one-checkout)) |
+| `shift+←` / `shift+→` | Next / previous chat of that checkout, from the list or from inside a pane |
+| `1`…`9` | In the list: jump to that chat by the number the rail prints beside it |
+| `tab` / `shift+tab` | In the list: next / previous chat |
+| `alt+1`…`alt+9` | Focused: jump straight to a chat, on terminals that send Option as Meta |
 | `p` | Run a project script from `.agent-manager/settings.toml` in the row's directory, or offer to create the file when the project has none ([Project settings](project-settings.md)) |
 | `o` | Open the selected row's directory in your editor |
 | `O` | Show what this worktree is running: its server in a browser, or a TUI run session's pane |
@@ -193,9 +198,28 @@ It asks to confirm first, and it works on a live session too: the running agent 
 
 The fork uses the source session's tool, group, working directory, and conversation history.
 
-Claude Code and Codex support forks by default. A custom tool needs a `fork_command` in its configuration. The source session must have a captured conversation ID.
+Claude Code and Codex support forks by default. A custom tool needs a `fork_command` in its configuration. The source session must have a conversation to fork: one that has never taken a turn is refused where you asked for it, rather than launching a pane that reports the missing conversation itself. A tool handed its id at spawn (`session_id_flag`) carries one from its first frame while the conversation behind it does not exist yet, so the check reads the tool's `session_store` to tell the two apart.
 
-A fork shares its source session's managed worktree. Agent Manager keeps the worktree until you delete the last session that uses it. You cannot rename the worktree while another session uses it.
+A fork shares its source session's managed worktree. Agent Manager keeps the worktree until you delete the last session that uses it. `c` is the same shape without the conversation — see [Several chats on one checkout](#several-chats-on-one-checkout).
+
+## Several chats on one checkout
+
+`c` is `f` without the context. A fork continues a conversation in a new session on the same checkout; a chat opens a new session on the same checkout with no conversation behind it. Both inherit the CLI, the directory, the group and the worktree of the session they were opened from, and neither cuts a second worktree — so nothing a first session does to a fresh checkout happens again: the project's setup script does not re-run, and auto-run scripts are not started a second time. The checkout is already dressed; what is missing is a conversation.
+
+That is the whole of it. `c` works from a terminal tab too, which knows the checkout it was opened in.
+
+Both record where they came from, in the same link a terminal has always recorded, so the rail draws them as one family: the first conversation on a checkout keeps its row, the ones opened beside it sit one level under it, and each carries the number you jump to it by. A session with no siblings is drawn exactly as before — no number, no block, nothing given up to a feature it is not using. Deleting one of them promotes the eldest of the rest into its place, so what is left of a family still hangs together.
+
+| Where you are | Keys |
+|-----|--------|
+| The list | `1`…`9` jump to a chat by its number; `shift+←` / `shift+→` and `tab` / `shift+tab` step; `↑↓` walk them like any other rows |
+| Focused in a pane | `shift+←` / `shift+→` step through them without giving up the pane, so switching costs one key rather than leaving focus and coming back. `alt+1`…`alt+9` jump straight to one, on terminals that send Option as Meta |
+
+Above the pane, a checkout with more than one chat draws a strip naming them all with their states and the keys that reach them.
+
+The binding is narrower than it sounds. It cannot use Meta: on macOS, Option is a compose key by default, so `alt+.` arrives as `≥` with no modifier on it and `alt+1` as `¡` — a terminal that has not been told otherwise never sends Meta at all. It cannot be a bare character, because in a pane every character belongs to the agent. And it cannot be `tab` or `shift+tab`, which are the agent's own — completion, and Claude Code's permission-mode cycling. Shift+arrow is left: a CSI sequence (`ESC [ 1;2C`) that carries no Meta, that every terminal sends, and that no agent CLI wants.
+
+Renaming a session whose checkout has anything else running in it renames the row and leaves the directory and branch where they are, saying so once. A worktree is named for the session it was created for, and a chat, a fork or a terminal opened beside that one is neither what it is named after nor something to move out from under.
 
 ## Self-naming sessions
 

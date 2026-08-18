@@ -412,6 +412,62 @@ func captureOpencode(cwd string, launchedAt time.Time, claimed map[string]bool) 
 	return pickEarliest(cands)
 }
 
+// claudeRoot is where Claude Code keeps its conversations: one directory per
+// project, holding a .jsonl per conversation named for its id. CLAUDE_CONFIG_DIR
+// moves the whole config, which is also what makes this testable.
+func claudeRoot() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, "projects")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects")
+}
+
+// ConversationExists reports whether a tool's store already holds the
+// conversation an id names.
+//
+// known is false when the question cannot be answered — a store with no
+// cheap lookup, a home directory that will not resolve, an empty id. A caller
+// must treat that as "no opinion" and carry on: refusing an action because a
+// file could not be found in a layout we do not understand would block work
+// that is perfectly fine.
+//
+// It exists for the one case where an id is not evidence of a conversation:
+// a tool launched with session_id_flag is handed an id at spawn, so its
+// session carries one from the moment it exists, while the tool writes
+// nothing until the first turn. Resuming that id finds nothing.
+//
+// Stores whose ids are captured rather than minted are deliberately not
+// answered for. Their id is read back out of the conversation, so having one
+// is already proof there is one — and gemini, the other store that keeps
+// findable files, resolves its own on the way into a fork and reports a
+// clean failure there rather than paying for a directory walk per keystroke.
+func ConversationExists(sessionStore, id string) (exists, known bool) {
+	if id == "" {
+		return false, false
+	}
+	switch sessionStore {
+	case "claude":
+		root := claudeRoot()
+		if root == "" {
+			return false, false
+		}
+		// Matched by glob rather than by rebuilding the project directory's
+		// name from the working directory: the encoding is the tool's to
+		// change, and a conversation is just as findable without knowing it.
+		// It also keeps answering after a session's directory moves.
+		matches, err := filepath.Glob(filepath.Join(root, "*", id+".jsonl"))
+		if err != nil {
+			return false, false
+		}
+		return len(matches) > 0, true
+	}
+	return false, false
+}
+
 func geminiRoot() string {
 	home, err := os.UserHomeDir()
 	if err != nil {

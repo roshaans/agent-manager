@@ -253,6 +253,11 @@ func (m *Model) handleFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// agent, and goes first so the pane reads the two keys in the order they
 	// were typed.
 	m.flushEsc(sess.ID)
+	// Read ahead of the forwarding path: an Alt key otherwise reaches the
+	// agent as an Escape-prefixed rune.
+	if target, ok := m.chatSwitchTarget(msg); ok {
+		return m.chatSwitch(target)
+	}
 	// Ctrl+O opens the session's directory in an editor, matching the
 	// binding a real attach gets. A windowed editor leaves the focus where
 	// it is; one that draws in the terminal takes it back on exit.

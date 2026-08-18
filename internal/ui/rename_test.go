@@ -126,7 +126,10 @@ func TestRenameSessionMovesItsWorktree(t *testing.T) {
 	}
 }
 
-func TestRenameSessionRefusesSharedWorktree(t *testing.T) {
+// A shared worktree stays where it is, and the rename lands anyway: refusing
+// it outright meant one terminal or one fork was enough to stop a session
+// from ever taking a name again.
+func TestRenameSessionKeepsASharedWorktreeWhereItIs(t *testing.T) {
 	m := buildModel(t)
 	repo := seedRepo(t)
 	spawned := createWorktreeSession(t, m, "owner", repo)
@@ -143,14 +146,24 @@ func TestRenameSessionRefusesSharedWorktree(t *testing.T) {
 	m.rename.input.SetValue("renamed")
 	m.handleRenameKey(tea.KeyMsg{Type: tea.KeyEnter})
 
-	if !strings.Contains(m.errBar.text, "shared with session \"forked\"") {
-		t.Fatalf("shared worktree error = %q", m.errBar.text)
+	if !strings.Contains(m.errBar.text, "shared with forked") {
+		t.Fatalf("shared worktree note = %q", m.errBar.text)
 	}
-	if m.mode != modeRename {
-		t.Fatalf("mode = %v, want rename card", m.mode)
+	if m.mode != modeList {
+		t.Fatalf("mode = %v, want the rename to have landed", m.mode)
 	}
 	if _, err := os.Stat(spawned.Cwd); err != nil {
 		t.Fatalf("shared worktree moved: %v", err)
+	}
+	stored, err := m.store.Get(spawned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "renamed" {
+		t.Fatalf("name = %q, want the rename to have landed despite the shared worktree", stored.Name)
+	}
+	if stored.WorktreeBranch != spawned.WorktreeBranch {
+		t.Fatalf("branch = %q, want it left alone", stored.WorktreeBranch)
 	}
 }
 
@@ -193,7 +206,7 @@ func TestRenameSessionWorktreePutsItBackWhenTheStoreRefuses(t *testing.T) {
 	m.store.Close()
 
 	sess := spawned
-	if err := renameSessionWorktree(m.gitDrv, m.store, &sess, "renamed"); err == nil {
+	if _, err := renameSessionWorktree(m.gitDrv, m.store, &sess, "renamed"); err == nil {
 		t.Fatal("a store that cannot record the move should report it")
 	}
 	if sess.Cwd != spawned.Cwd || sess.WorktreeBranch != spawned.WorktreeBranch {

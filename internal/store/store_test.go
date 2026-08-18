@@ -1242,3 +1242,52 @@ VALUES ('a', 'older', 'claude', '/tmp/older', 'g1', 'idle', 1, 2, 'conversation-
 		t.Fatalf("after writing the new columns: %+v", sess)
 	}
 }
+
+// Deleting a session hands the ones opened beside it to its own parent, so a
+// family of conversations on one checkout survives losing its first member.
+func TestDeleteAdoptsTheSessionsOpenedFromIt(t *testing.T) {
+	st := newTestStore(t)
+	for _, sess := range []Session{
+		sample("root", ""),
+		func() Session { s := sample("second", ""); s.ParentID = "root"; return s }(),
+		func() Session { s := sample("third", ""); s.ParentID = "root"; return s }(),
+	} {
+		if err := st.CreateSession(sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.AdoptChildren("root", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Delete("root"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"second", "third"} {
+		sess, err := st.Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sess.ParentID != "" {
+			t.Fatalf("%s still points at the deleted row: %q", id, sess.ParentID)
+		}
+	}
+
+	// A middle link hands its children up rather than orphaning them.
+	chain := func() Session { s := sample("leaf", ""); s.ParentID = "second"; return s }()
+	if err := st.CreateSession(chain); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AdoptChildren("second", "third"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetParent("third", ""); err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := st.Get("leaf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaf.ParentID != "third" {
+		t.Fatalf("leaf parent = %q, want the row its own parent was handed to", leaf.ParentID)
+	}
+}
