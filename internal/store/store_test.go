@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1165,5 +1166,79 @@ func TestSessionPROnAGoneSession(t *testing.T) {
 	st := newTestStore(t)
 	if err := st.SetSessionPR("nobody", "https://x/y/z/pull/1", "created"); !errors.Is(err, ErrSessionGone) {
 		t.Fatalf("SetSessionPR on a missing session = %v, want ErrSessionGone", err)
+	}
+}
+
+// Every other store test starts from an empty file, so none of them would
+// notice a column added in the wrong place. A real database has rows written
+// by older schemas, and the columns each read is positional: a SELECT and its
+// Scan that drift apart put one field's value into another field's variable,
+// silently and for every row.
+func TestOpeningAnOlderDatabaseKeepsEveryFieldInItsOwnColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// The schema as it shipped before any of the columns since: enough of a
+	// row that a misaligned read shows up as one value in another's place.
+	if _, err := old.Exec(`
+CREATE TABLE sessions (
+	id             TEXT PRIMARY KEY,
+	name           TEXT NOT NULL,
+	tool           TEXT NOT NULL,
+	cwd            TEXT NOT NULL,
+	group_name     TEXT NOT NULL,
+	status         TEXT NOT NULL,
+	archived       INTEGER NOT NULL DEFAULT 0,
+	created_at     INTEGER NOT NULL,
+	last_status_at INTEGER NOT NULL,
+	agent_session_id TEXT NOT NULL DEFAULT '',
+	pending_inputs TEXT NOT NULL DEFAULT '[]',
+	pending_claimed INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO sessions (id, name, tool, cwd, group_name, status, created_at, last_status_at, agent_session_id)
+VALUES ('a', 'older', 'claude', '/tmp/older', 'g1', 'idle', 1, 2, 'conversation-id');`); err != nil {
+		t.Fatalf("seed the old schema: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open migrated database: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	sess, err := st.Get("a")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	for _, field := range []struct{ name, got, want string }{
+		{"Name", sess.Name, "older"},
+		{"Tool", sess.Tool, "claude"},
+		{"Cwd", sess.Cwd, "/tmp/older"},
+		{"Group", sess.Group, "g1"},
+		{"Status", sess.Status, "idle"},
+		{"AgentSessionID", sess.AgentSessionID, "conversation-id"},
+		// Everything added since has to read as unset, not as a neighbour.
+		{"WorktreeBranch", sess.WorktreeBranch, ""},
+		{"ParentID", sess.ParentID, ""},
+		{"RunScript", sess.RunScript, ""},
+		{"PRURL", sess.PRURL, ""},
+		{"PRSource", sess.PRSource, ""},
+	} {
+		if field.got != field.want {
+			t.Errorf("%s = %q, want %q", field.name, field.got, field.want)
+		}
+	}
+
+	// And the migrated row still takes writes to the newest columns.
+	if err := st.SetSessionPR("a", "https://github.com/me/fork/pull/9", "created"); err != nil {
+		t.Fatalf("SetSessionPR: %v", err)
+	}
+	if sess, _ := st.Get("a"); sess.PRURL == "" || sess.PRSource != "created" || sess.Name != "older" {
+		t.Fatalf("after writing the new columns: %+v", sess)
 	}
 }

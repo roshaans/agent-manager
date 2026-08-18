@@ -847,3 +847,43 @@ func TestAdoptServerPaneThemeIgnoresAHalfSetServer(t *testing.T) {
 		t.Fatalf("published %+v from an unthemed server", *theme)
 	}
 }
+
+// CaptureHistory has to reach past the visible screen: what a pass reads a
+// pull request address out of has usually been scrolled off by the output
+// that followed it.
+func TestCaptureHistoryReachesPastTheScreen(t *testing.T) {
+	driver := requireTmux(t)
+	id := "hist" + strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "")
+	// No shell variables: tmux expands them before sh -c ever sees them.
+	command := `printf 'MARKER-LINE\n'; seq 300; cat`
+	if err := driver.Create(id, "/tmp", "sh -c "+strconv.Quote(command), nil, 80, 24); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { driver.Kill(id) })
+
+	// Wait for the filler to push the marker off the visible pane, so the
+	// two captures are being compared in the state this is about.
+	deadline := time.Now().Add(5 * time.Second)
+	var pane string
+	for time.Now().Before(deadline) {
+		pane, _ = driver.CapturePane(id)
+		if pane != "" && !strings.Contains(pane, "MARKER-LINE") {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if strings.Contains(pane, "MARKER-LINE") {
+		t.Fatal("the marker never scrolled off screen, so this would prove nothing")
+	}
+
+	history, err := driver.CaptureHistory(id, 1000)
+	if err != nil {
+		t.Fatalf("CaptureHistory: %v", err)
+	}
+	if !strings.Contains(history, "MARKER-LINE") {
+		t.Fatal("the scrolled-off line was not in the history")
+	}
+	if got, err := driver.CaptureHistory(id, 0); err != nil || got != "" {
+		t.Fatalf("CaptureHistory(0) = %q, %v; want nothing asked for, nothing read", got, err)
+	}
+}
