@@ -115,7 +115,7 @@ lazygit has to be on `PATH` — nothing is configurable here, and the status lin
 
 ## Pull requests
 
-A session with an open pull request wears its number: `#328` beside the name on a chip of its own shade, and marked `✎` on the plain chip while it is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
+A session with an open pull request wears its number: `#328` beside the name, on a chip tinted by that pull request's checks — green when they pass, amber while they run, red when one fails, and a neutral tint when it has none. A draft sits on the plain chip and is marked `✎`, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
 
 `P` on a session with **no** pull request offers to open one: `↵` pushes the branch and creates it, titled from its commits, in the repository the branch was pushed to. `r` opens the repository page, which is what `P` used to do here on its own. Creating it this way is the only moment the link between a session and its pull request is a fact rather than a reading — everything below is working out after the event what this knows at it.
 
@@ -132,7 +132,7 @@ A session that opened a pull request somewhere else has not stopped working on t
 
 The created and printed links are written to the session and outlive the manager run, because what a session printed scrolls out of its pane long before the work it names is finished with. The titles and states are not stored — those are re-read every pass, so a badge is never a stale claim. A pull request that has been merged stops wearing a badge, since the badge is for work in flight, but `P` still opens it: it is still what that session produced.
 
-The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Each repository is listed once per pass no matter how many sessions or worktrees sit in it, and sessions sharing a checkout share the one commit lookup, so a dozen agents on one repo cost one pass and not a dozen. Without `gh` — or signed out of it, or on a host it does not know — no badges appear and `P` opens the repository page. Nothing is cached to disk except the link itself.
+The checks ride the same listing as everything else, so the colour costs no extra request. The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Each repository is listed once per pass no matter how many sessions or worktrees sit in it, and sessions sharing a checkout share the one commit lookup, so a dozen agents on one repo cost one pass and not a dozen. Without `gh` — or signed out of it, or on a host it does not know — no badges appear and `P` opens the repository page. Nothing is cached to disk except the link itself.
 
 A checkout whose `origin` is a fork is read twice per pass — once naming that fork, once letting `gh` resolve the repository itself, which always answers with the parent. Both are needed, because a fork holds pull requests either way round: opened against the parent, a pull request lives upstream, and opened against the fork it lives on the fork. A checkout that is nobody's fork answers both the same way and the repeats are dropped.
 

@@ -243,8 +243,14 @@ func TestEveryQueryAgreesWithTheStruct(t *testing.T) {
 			t.Errorf("the commit lookup produces %q, which pullRequest cannot hold", name)
 		}
 	}
+	// Fields the commit lookup genuinely cannot answer for. The REST endpoint
+	// it uses returns pull requests containing a commit and nothing about
+	// their checks, so a pull request found only that way has none until a
+	// listing covers it too. Named here so adding a field by accident still
+	// fails, and adding one deliberately has to say so.
+	listingOnly := map[string]bool{"statusCheckRollup": true}
 	for _, name := range strings.Split(prFields, ",") {
-		if !produced[name] {
+		if !produced[name] && !listingOnly[name] {
 			t.Errorf("gh is asked for %q but the commit lookup never produces it", name)
 		}
 	}

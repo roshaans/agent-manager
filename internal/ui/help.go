@@ -170,6 +170,7 @@ func helpSections() []helpSection {
 		}},
 		{title: "pull requests (P)", rows: [][2]string{
 			{"", "a #number beside a session is the pull request it produced"},
+			{"", "tinted by its checks: green passing, amber running, red failing"},
 			{"", "on a plainer chip, marked " + prDraftMark + ", while it is a draft"},
 			{"", "+1 counts the others when a session has more than one"},
 			{"↵", "with none: push the branch and open one, recorded here"},

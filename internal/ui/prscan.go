@@ -23,11 +23,67 @@ type pullRequest struct {
 	State   string `json:"state"`
 	Head    string `json:"headRefName"`
 	Base    string `json:"baseRefName"`
+	// Checks is every check and legacy commit status on the head commit,
+	// which the listing hands over at no extra call.
+	Checks []checkRun `json:"statusCheckRollup"`
+}
+
+// checkRun is one entry of that rollup. A check run reports a status and,
+// once it has finished, a conclusion; a legacy commit status reports neither
+// and carries its own state instead, so all three are read.
+type checkRun struct {
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	State      string `json:"state"`
+}
+
+// checksState is a pull request's checks rolled into the one thing a row has
+// room to say.
+type checksState int
+
+const (
+	checksUnknown checksState = iota
+	checksPassing
+	checksRunning
+	checksFailing
+)
+
+// checks rolls the run up the way a reader would: anything broken makes the
+// whole thing broken, anything still going makes it pending, and only a set
+// that has finished without a failure is passing.
+//
+// Skipped and neutral runs count as fine. A skipped job is a job somebody
+// arranged not to need, and colouring a pull request for it would train the
+// reader to ignore the colour.
+func (pr pullRequest) checks() checksState {
+	if len(pr.Checks) == 0 {
+		return checksUnknown
+	}
+	running := false
+	for _, run := range pr.Checks {
+		switch run.Conclusion {
+		case "FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE":
+			return checksFailing
+		}
+		switch run.State {
+		case "FAILURE", "ERROR":
+			return checksFailing
+		case "PENDING":
+			running = true
+		}
+		if run.Status != "" && run.Status != "COMPLETED" {
+			running = true
+		}
+	}
+	if running {
+		return checksRunning
+	}
+	return checksPassing
 }
 
 // prFields is what both the listing and a single lookup ask gh for, kept in
 // one place so a badge reads the same whichever of the two found it.
-const prFields = "number,url,title,isDraft,state,headRefName,baseRefName"
+const prFields = "number,url,title,isDraft,state,headRefName,baseRefName,statusCheckRollup"
 
 // open reports whether a pull request is still in flight. A listing only ever
 // carries open ones; a pull request found by its recorded address can be any
@@ -533,6 +589,19 @@ func (m *Model) prChip(sess store.Session) string {
 	if extra := len(prs) - 1; extra > 0 {
 		label += "+" + strconv.Itoa(extra)
 	}
+	// The chip is tinted by its checks, which is the one thing a reader wants
+	// from a pull request without opening it. One with no checks at all keeps
+	// the neutral tint: nothing is passing and nothing is broken, and green
+	// would claim otherwise.
+	tint := colorAccent2
+	switch pr.checks() {
+	case checksPassing:
+		tint = colorFinished
+	case checksRunning:
+		tint = colorWaiting
+	case checksFailing:
+		tint = colorErrored
+	}
 	// A draft recedes to the fill every other chip sits on, where an open
 	// pull request gets the lifted one. Dimming the text instead would put
 	// subtle on a lifted background, which in half these themes is a chip
@@ -540,7 +609,7 @@ func (m *Model) prChip(sess store.Session) string {
 	if pr.IsDraft {
 		return pill(label, colorBright)
 	}
-	return shadedPill(label, colorBright)
+	return shadedPill(label, tint)
 }
 
 // fetchRemote is the seam tests swap, so a pass under test never reaches a
