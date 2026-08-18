@@ -297,13 +297,7 @@ func (m *Model) visibleReorderTarget(entry treeRow, delta int) (treeRow, bool) {
 	if delta < 0 {
 		step = -1
 	}
-	// The pinned block and the tree are separate orderings, so a reorder
-	// never pairs a row in one with a row in the other.
-	from, to := 0, len(m.treeRows())
-	if m.cursor >= to {
-		from, to = to, len(m.rows)
-	}
-	for i := m.cursor + step; i >= from && i < to; i += step {
+	for i := m.cursor + step; i >= 0 && i < len(m.rows); i += step {
 		candidate := m.rows[i]
 		if candidate.isRoot() {
 			// parentGroup("") is "" too, so root would match a top-level
@@ -316,7 +310,7 @@ func (m *Model) visibleReorderTarget(entry treeRow, delta int) (treeRow, bool) {
 			}
 			continue
 		}
-		if !candidate.isGroup && candidate.sess.Group == entry.sess.Group {
+		if !candidate.isGroup && candidate.sess.Group == entry.sess.Group && candidate.sess.ParentID == entry.sess.ParentID {
 			return candidate, true
 		}
 	}
@@ -497,6 +491,7 @@ const quickCloseSetting = "quick_prompt_close"
 // or under the oldest agent sharing its directory when it recorded none.
 // Only a shell that finds neither in its own group sits in that group.
 const terminalPlacementSetting = "terminal_placement"
+const worktreeSetting = "worktree_default"
 
 const notificationsSetting = "notifications"
 

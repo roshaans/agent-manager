@@ -223,7 +223,7 @@ func (s *Spawner) Create(opts Options) (Result, error) {
 		AgentSessionID: agentSessionID,
 		WorktreeRepo:   worktreeRepo,
 		WorktreeBranch: worktreeBranch,
-		ParentID:       opts.ParentID,
+		ParentID:       s.anchorParent(opts.ParentID),
 		PendingInputs:  pendingInputs,
 	}, tool, base, LaunchOptions{
 		RollbackWorktree: opts.Worktree,
@@ -382,6 +382,26 @@ func (s *Spawner) startAutoRuns(settings project.Settings, dir, group string) ([
 
 // discardWorktree rolls back a worktree created for a spawn that failed
 // partway; a fresh worktree is clean by construction, so the removal fires.
+// anchorParent resolves who a new session should hang off, given the row
+// that asked for it. The tree allows a parent no parent of its own, so a
+// session asked for by one that is itself nested joins that family rather
+// than hanging off a sibling. A row nobody can find anchors nothing: an id
+// from a caller the store has never seen is not a reason to refuse the
+// session it asked for.
+func (s *Spawner) anchorParent(parentID string) string {
+	if parentID == "" {
+		return ""
+	}
+	parent, err := s.store.Get(parentID)
+	if err != nil {
+		return ""
+	}
+	if parent.ParentID != "" {
+		return parent.ParentID
+	}
+	return parent.ID
+}
+
 func (s *Spawner) discardWorktree(repo, path, branch string) {
 	if repo == "" || s.git == nil {
 		return

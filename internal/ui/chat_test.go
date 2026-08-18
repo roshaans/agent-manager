@@ -258,7 +258,6 @@ func TestChatOpenedFromAShellJoinsTheSameWorkspace(t *testing.T) {
 	createSession(t, m, "build", t.TempDir(), "")
 	m.selectSessionRow(t, "build")
 	source, _ := m.selected()
-	nestShells(t, m)
 	shell := spawnTerminal(t, m)
 
 	if shell.ParentID != source.ID {
@@ -451,10 +450,9 @@ func TestShiftArrowsCycleFromTheListAndTheFocusedPane(t *testing.T) {
 	}
 }
 
-// Which conversation a chat came out of is a fact worth keeping, so the link
-// records it — and the rail flattens the family anyway, however deep the
-// chain that built it.
-func TestAChainOfChatsIsStoredDeepAndDrawnFlat(t *testing.T) {
+// The tree allows a parent no parent of its own, so a chat opened from a
+// chat joins the family rather than nesting under its sibling.
+func TestAChatOpenedFromAChatJoinsTheFamily(t *testing.T) {
 	m := buildModel(t)
 	m.applyCmd(t, m.refreshCmd())
 	createSession(t, m, "hi", t.TempDir(), "")
@@ -462,27 +460,28 @@ func TestAChainOfChatsIsStoredDeepAndDrawnFlat(t *testing.T) {
 	first, _ := m.selected()
 
 	second := spawnChat(t, m) // opened from hi
-	third := spawnChat(t, m)  // opened from the chat above, not from hi
+	third := spawnChat(t, m)  // opened from the chat above
 
-	held, _ := m.sessionByID(third)
-	if held.ParentID != second {
-		t.Fatalf("third chat's parent = %q, want the chat it was opened from (%q)", held.ParentID, second)
+	for _, id := range []string{second, third} {
+		held, _ := m.sessionByID(id)
+		if held.ParentID != first.ID {
+			t.Fatalf("%s hangs off %q, want the checkout's first conversation (%q)", held.Name, held.ParentID, first.ID)
+		}
 	}
 
-	// One family, one level deep, numbered in order.
 	root := rowFor(t, m, first.ID)
 	for i, id := range []string{second, third} {
 		row := rowFor(t, m, id)
 		if row.depth != root.depth+1 {
-			t.Fatalf("chat %d sits at depth %d, want one level under the family's first (%d)", i+2, row.depth, root.depth)
+			t.Fatalf("chat %d sits at depth %d, want one level under the first (%d)", i+2, row.depth, root.depth)
 		}
 		sess, _ := m.sessionByID(id)
 		if got := m.chatNumber(sess); got != i+2 {
 			t.Fatalf("chat %q is numbered %d, want %d", sess.Name, got, i+2)
 		}
 	}
-	if family := m.chatFamily(m.chatRoot(held)); len(family) != 3 {
-		t.Fatalf("family holds %d chats, want all 3 however deep the chain", len(family))
+	if family := m.chatFamily(m.chatRoot(first)); len(family) != 3 {
+		t.Fatalf("family holds %d chats, want 3", len(family))
 	}
 }
 

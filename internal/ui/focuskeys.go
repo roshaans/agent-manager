@@ -215,10 +215,10 @@ func (m *Model) leaveFocus() tea.Cmd {
 	return nil
 }
 
-// handleFocusKey forwards every key into the focused pane. Ctrl+Q, ctrl+\
-// and a double Escape return to the list, Ctrl+R opens the review and
-// Ctrl+O the editor, mirroring the bindings a real attach gets, and every
-// plain character - q included - reaches the agent.
+// handleFocusKey forwards every key into the focused pane. Ctrl+Q and
+// ctrl+\ return to the list, Ctrl+R opens the review and F3 the editor,
+// mirroring the bindings a real attach gets, and every plain character - q
+// included - reaches the agent.
 func (m *Model) handleFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+q" || msg.String() == `ctrl+\` {
 		return m, m.leaveFocus()
@@ -258,10 +258,10 @@ func (m *Model) handleFocusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if target, ok := m.chatSwitchTarget(msg); ok {
 		return m.chatSwitch(target)
 	}
-	// Ctrl+O opens the session's directory in an editor, matching the
-	// binding a real attach gets. A windowed editor leaves the focus where
-	// it is; one that draws in the terminal takes it back on exit.
-	if msg.String() == "ctrl+o" {
+	// F3 opens the session's directory in an editor, matching the binding a
+	// real attach gets. A windowed editor leaves the focus where it is; one
+	// that draws in the terminal takes it back on exit.
+	if msg.String() == "f3" {
 		return m.openEditor()
 	}
 	// Ctrl+R opens the review, matching the binding a real attach gets;

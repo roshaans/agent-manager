@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/YoanWai/agent-manager/internal/config"
 	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
@@ -147,7 +148,7 @@ func TestArchivedViewShowsOnlyArchivedSessions(t *testing.T) {
 func railText(t *testing.T, m *Model) []string {
 	t.Helper()
 	var out []string
-	for _, line := range m.entryLines(m.treeRows(), 0, 60, 20) {
+	for _, line := range m.entryLines(m.rows, 0, 60, 20) {
 		out = append(out, strings.TrimRight(ansi.Strip(line.text), " "))
 	}
 	return out
@@ -255,7 +256,7 @@ func TestComfortableRowSurvivesShortRail(t *testing.T) {
 	}
 	m.selectSessionRow(t, "three")
 
-	lines := m.entryLines(m.treeRows(), 0, 60, 2)
+	lines := m.entryLines(m.rows, 0, 60, 2)
 	if len(lines) != 2 {
 		t.Fatalf("entry lines = %d want 2", len(lines))
 	}
@@ -610,10 +611,12 @@ func TestEveryReadingOfASessionStandsInForAnAwaitedName(t *testing.T) {
 		t.Fatalf("create group: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
+	// An empty name is what asks the session to name itself, so the
+	// placeholder stands in until it answers.
 	if err := m.spawnSession(spawn.Options{Tool: "claude", Directory: dir, Group: "backend", Prompt: "do things"}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	generated := lastSpawned(t, m).Name
+	generated := m.sessions[len(m.sessions)-1].Name
 
 	type reading struct{ where, text string }
 	m.selectGroupRow(t, "backend")
@@ -865,28 +868,50 @@ func TestPreviewSkipsLoaderForSettledSessions(t *testing.T) {
 	}
 }
 
-// The loader animates on the preview tick the starting session already
-// earns, and cycles rather than running off the end of its frames.
-func TestPreviewLoaderTurnsOnThePreviewTick(t *testing.T) {
+func TestPreviewLoaderIsCenteredAndMovesOnThePreviewTick(t *testing.T) {
 	m := previewModel(status.Starting, blankCapture)
-	glyph := func() string {
-		line := strings.TrimSpace(previewText(m))
-		if line == "" {
-			t.Fatalf("preview painted nothing")
+	first := previewText(m)
+	lines := strings.Split(first, "\n")
+	painted := make([]int, 0, 6)
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			painted = append(painted, i)
 		}
-		return string([]rune(line)[0])
 	}
-	seen := map[string]bool{}
-	first := glyph()
-	for i := 0; i < len(startupFrames); i++ {
-		seen[glyph()] = true
-		m.Update(previewTickMsg{})
+	if len(painted) != 6 || painted[0] != 3 || painted[5] != 8 {
+		t.Fatalf("loader rows = %v, want the middle of a 12-row preview", painted)
 	}
-	if len(seen) != len(startupFrames) {
-		t.Fatalf("loader showed %d of %d frames over a full turn: %v", len(seen), len(startupFrames), seen)
+	if strings.Count(first, "●") != 1 || strings.Count(first, "•") != 1 {
+		t.Fatalf("loader should show one head and one trailing dot, got %q", first)
 	}
-	if got := glyph(); got != first {
-		t.Fatalf("after a full turn the loader shows %q, want %q", got, first)
+	for _, row := range painted {
+		left := len(lines[row]) - len(strings.TrimLeft(lines[row], " "))
+		content := strings.TrimSpace(lines[row])
+		right := 80 - left - ansi.StringWidth(content)
+		if diff := left - right; diff < -1 || diff > 1 {
+			t.Fatalf("loader row %q is not centered: left=%d right=%d", lines[row], left, right)
+		}
+	}
+	m.Update(startupTickMsg{})
+	if next := previewText(m); next == first {
+		t.Fatal("preview loader did not move on the startup tick")
+	}
+}
+
+func TestStartingSessionGlyphMovesOnTheStartupTick(t *testing.T) {
+	for _, tool := range []string{"agent", "shell"} {
+		m := previewModel(status.Starting, blankCapture)
+		m.rows[0].sess.Tool = tool
+		m.cfg.Tools = map[string]config.Tool{"shell": {Shell: true}}
+		first := ansi.Strip(m.sessionGlyph(m.rows[0].sess))
+		m.Update(startupTickMsg{})
+		second := ansi.Strip(m.sessionGlyph(m.rows[0].sess))
+		if first == second {
+			t.Fatalf("starting %s glyph stayed on %q", tool, first)
+		}
+		if second == shellGlyph {
+			t.Fatal("starting shell used the resting shell glyph")
+		}
 	}
 }
 
@@ -921,63 +946,5 @@ func TestPreviewLeavesTheFocusedPaneAlone(t *testing.T) {
 	}
 	if !strings.Contains(first, "\x1b[") {
 		t.Fatalf("focused row 0 lost its caret: %q", first)
-	}
-}
-
-// A pinned row stands away from the tree, so it trades its tool name — one
-// every shell shares — for the session it was opened for. The group it
-// carries is shared by every worktree under it and would tell them apart
-// from nothing.
-func TestPinnedShellNamesItsSession(t *testing.T) {
-	m := buildModel(t)
-	groupWithShell(t, m, "backend")
-	createSession(t, m, "agent-one", t.TempDir(), "backend")
-	m.selectSessionRow(t, "agent-one")
-	shell := spawnTerminal(t, m)
-	pinShells(t, m)
-
-	rail := m.rail()
-	row := strings.Split(rail, "\n")[railRow(rail, shell.Name)]
-	if !strings.Contains(row, "agent-one") {
-		t.Fatalf("a pinned row should name the session it was opened for:\n%s", row)
-	}
-	if strings.Contains(row, "· "+shell.Tool+" ·") {
-		t.Fatalf("the tool name is redundant under the heading:\n%s", row)
-	}
-}
-
-// Without a session to name, the pinned row falls back to the directory it
-// was opened in, which is still narrower than the group.
-func TestPinnedShellWithoutASessionNamesItsDirectory(t *testing.T) {
-	m := buildModel(t)
-	groupWithShell(t, m, "backend")
-	shell := spawnTerminal(t, m)
-	pinShells(t, m)
-
-	rail := m.rail()
-	row := strings.Split(rail, "\n")[railRow(rail, shell.Name)]
-	if !strings.Contains(row, filepath.Base(shell.Cwd)) {
-		t.Fatalf("want the directory %q on the row:\n%s", filepath.Base(shell.Cwd), row)
-	}
-}
-
-// Nested, the row above already names the session, so the shell's own meta
-// spends nothing on repeating it and goes straight to how long it has been
-// resting.
-func TestNestedShellRowSpendsNothingOnItsSession(t *testing.T) {
-	m := buildModel(t)
-	groupWithShell(t, m, "backend")
-	createSession(t, m, "agent-one", t.TempDir(), "backend")
-	m.selectSessionRow(t, "agent-one")
-	shell := spawnTerminal(t, m)
-	nestShells(t, m)
-
-	rail := m.rail()
-	row := strings.Split(rail, "\n")[railRow(rail, shell.Name)]
-	if strings.Contains(row, "· agent-one") {
-		t.Fatalf("the session is the row above; the shell should not repeat it:\n%s", row)
-	}
-	if strings.Contains(row, "· "+shell.Tool+" ·") {
-		t.Fatalf("every shell runs the same tool, so the name is dead weight:\n%s", row)
 	}
 }

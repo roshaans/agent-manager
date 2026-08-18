@@ -138,9 +138,15 @@ func TestCreateMintsAConversationIDWhenTheToolTakesOne(t *testing.T) {
 
 func TestCreateStoresTheRowItLaunched(t *testing.T) {
 	s := newSpawner(t)
+	// A real row to hang off: the tree checks that a parent exists, and a
+	// nested session takes its group.
+	caller, err := s.Create(Options{Tool: "claude", Name: "caller", Group: "backend", Directory: t.TempDir()})
+	if err != nil {
+		t.Fatalf("caller: %v", err)
+	}
 	result, err := s.Create(Options{
 		Tool: "claude", Name: "listed", Group: "backend",
-		Directory: t.TempDir(), Prompt: "do things", ParentID: "abcd1234",
+		Directory: t.TempDir(), Prompt: "do things", ParentID: caller.Session.ID,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -157,7 +163,7 @@ func TestCreateStoresTheRowItLaunched(t *testing.T) {
 	}
 	// The session that asked for this one, recorded the way a terminal
 	// records the session it was opened for.
-	if stored.ParentID != "abcd1234" {
+	if stored.ParentID != caller.Session.ID {
 		t.Fatalf("parent = %q, want the caller", stored.ParentID)
 	}
 	if !s.tmux.Exists(stored.ID) {

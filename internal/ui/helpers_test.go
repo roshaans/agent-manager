@@ -206,7 +206,7 @@ func listSessionIDs(t *testing.T, st *store.Store) []string {
 func pickGroup(t *testing.T, m *Model, path string) {
 	t.Helper()
 	for i, opt := range m.form.groups {
-		if opt.path == path {
+		if opt.path == path && opt.sessID == "" {
 			m.form.groupIndex = i
 			return
 		}
@@ -303,21 +303,6 @@ func sessionNames(m *Model) []string {
 		names = append(names, sess.Name)
 	}
 	return names
-}
-
-// pinShells and nestShells name the placement a test is about rather than
-// inherit it, so which one is the default is free to change without quietly
-// turning a test into a test of something else.
-func pinShells(t *testing.T, m *Model) {
-	t.Helper()
-	m.shellsPinned = true
-	m.rebuildRows()
-}
-
-func nestShells(t *testing.T, m *Model) {
-	t.Helper()
-	m.shellsPinned = false
-	m.rebuildRows()
 }
 
 func rowFor(t *testing.T, m *Model, id string) treeRow {

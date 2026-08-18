@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -136,6 +137,123 @@ func TestOpenTerminalOnSessionRowUsesItsDirectory(t *testing.T) {
 	}
 	if sess.Group != "backend" {
 		t.Fatalf("terminal group = %q, want backend", sess.Group)
+	}
+}
+
+func TestOpenTerminalOnAgentNests(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	agent, _ := m.selected()
+	shell := spawnTerminal(t, m)
+	if shell.ParentID != agent.ID || shell.Group != agent.Group {
+		t.Fatalf("shell parent=%q group=%q, want %q / %q", shell.ParentID, shell.Group, agent.ID, agent.Group)
+	}
+}
+
+func TestOpenTerminalOnGroupIsUnnested(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	m.selectGroupRow(t, "backend")
+	shell := spawnTerminal(t, m)
+	if shell.ParentID != "" || shell.Group != "backend" {
+		t.Fatalf("group T = %+v", shell)
+	}
+}
+
+func TestOpenTerminalOnNestedShellSharesParent(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	first := spawnTerminal(t, m)
+	m.selectSessionRow(t, first.Name)
+	second := spawnTerminal(t, m)
+	if second.ParentID != first.ParentID || second.ParentID == "" || second.Group != first.Group {
+		t.Fatalf("second = %+v, first = %+v", second, first)
+	}
+}
+
+// A terminal is named for the session it hangs under, so the row says which
+// agent it was opened for even after the shell is cd'd somewhere else.
+func TestTerminalTakesTheNameOfItsSession(t *testing.T) {
+	m := buildModel(t)
+	createSession(t, m, "coder", t.TempDir(), "")
+	m.selectSessionRow(t, "coder")
+
+	shell := spawnTerminal(t, m)
+	if want := shellToolName + "-coder"; shell.Name != want {
+		t.Fatalf("terminal name = %q, want %q", shell.Name, want)
+	}
+}
+
+// The name is how one row is told from the next, so terminals sharing a
+// session count up instead of landing on one name. A terminal opened from
+// one of them is a sibling, and counts up in the same run.
+func TestTerminalsUnderOneSessionCountUp(t *testing.T) {
+	m := buildModel(t)
+	createSession(t, m, "coder", t.TempDir(), "")
+	m.selectSessionRow(t, "coder")
+	first := spawnTerminal(t, m)
+
+	m.selectSessionRow(t, "coder")
+	second := spawnTerminal(t, m)
+	if want := shellToolName + "-coder-2"; second.Name != want {
+		t.Fatalf("second terminal name = %q, want %q", second.Name, want)
+	}
+
+	m.selectSessionRow(t, first.Name)
+	third := spawnTerminal(t, m)
+	if want := shellToolName + "-coder-3"; third.Name != want {
+		t.Fatalf("sibling terminal name = %q, want %q", third.Name, want)
+	}
+}
+
+// A terminal opened on a group has no session to name it after, so it keeps
+// the generated name rather than taking the group's.
+func TestTerminalWithNoSessionKeepsItsGeneratedName(t *testing.T) {
+	m := buildModel(t)
+	if err := m.store.CreateGroup("backend", t.TempDir()); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	m.selectGroupRow(t, "backend")
+
+	shell := spawnTerminal(t, m)
+	if !regexp.MustCompile(`^` + shellToolName + `-[0-9a-f]{4}$`).MatchString(shell.Name) {
+		t.Fatalf("terminal name = %q, want the generated %s-<4 hex>", shell.Name, shellToolName)
+	}
+}
+
+func TestTerminalKeyOnUnnestedShellStaysUnnested(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	m.selectGroupRow(t, "backend")
+	loose := spawnTerminal(t, m)
+	if loose.ParentID != "" {
+		t.Fatalf("first shell nested: %+v", loose)
+	}
+	m.selectSessionRow(t, loose.Name)
+	second := spawnTerminal(t, m)
+	if second.ParentID != "" || second.Group != loose.Group {
+		t.Fatalf("second = %+v, first = %+v", second, loose)
 	}
 }
 
@@ -313,155 +431,5 @@ func TestAgentRowLegendKeepsTheConversationKeys(t *testing.T) {
 		if !slices.ContainsFunc(legend.pairs, func(pair [2]string) bool { return pair[0] == key }) {
 			t.Fatalf("legend should offer %q on an agent row", key)
 		}
-	}
-}
-
-// A terminal opened while the cursor is already on one joins it as a
-// sibling: a shell is not something to hang another shell off.
-func TestSecondShellJoinsTheFirstRatherThanNesting(t *testing.T) {
-	m := buildModel(t)
-	groupWithShell(t, m, "backend")
-	createSession(t, m, "agent-one", t.TempDir(), "backend")
-	m.selectSessionRow(t, "agent-one")
-	first := spawnTerminal(t, m)
-	second := spawnTerminal(t, m)
-	nestShells(t, m)
-
-	if m.shellParents[second.ID] != m.shellParents[first.ID] {
-		t.Fatalf("second shell hangs off %q, want the first's parent %q",
-			m.shellParents[second.ID], m.shellParents[first.ID])
-	}
-	if rowFor(t, m, second.ID).depth != rowFor(t, m, first.ID).depth {
-		t.Fatal("siblings sit at the same depth")
-	}
-	// Spelled out rather than merely "different": the second shell is meant
-	// to read as the second one, which any unique suffix would satisfy
-	// without saying.
-	if first.Name != "terminal-agent-one" {
-		t.Fatalf("first shell name = %q, want terminal-agent-one", first.Name)
-	}
-	if second.Name != "terminal-agent-one-2" {
-		t.Fatalf("second shell name = %q, want terminal-agent-one-2", second.Name)
-	}
-}
-
-// A shell opened before the link was stored still finds its session, by the
-// directory both were launched in — for a worktree, the one agent there.
-func TestShellWithoutALinkNestsByDirectory(t *testing.T) {
-	m := buildModel(t)
-	dir := t.TempDir()
-	groupWithShell(t, m, "backend")
-	createSession(t, m, "agent-one", dir, "backend")
-	m.selectSessionRow(t, "agent-one")
-	shell := spawnTerminal(t, m)
-
-	for i := range m.sessions {
-		if m.sessions[i].ID == shell.ID {
-			m.sessions[i].ParentID = ""
-			m.sessions[i].Cwd = dir
-		}
-	}
-	nestShells(t, m)
-
-	agent := rowFor(t, m, m.shellParents[shell.ID])
-	if agent.sess.Name != "agent-one" {
-		t.Fatalf("shell fell back to %q, want the agent sharing its directory", agent.sess.Name)
-	}
-}
-
-// Nested, the session the shell hangs off is the row above it, so the row
-// says nothing a reader can already see. Only a shell with no session to
-// hang off spends the column, on the directory it was launched in.
-func TestNestedShellLeavesTheColumnToItsSession(t *testing.T) {
-	m := buildModel(t)
-	groupWithShell(t, m, "backend")
-	createSession(t, m, "agent-one", t.TempDir(), "backend")
-	m.selectSessionRow(t, "agent-one")
-	nested := spawnTerminal(t, m)
-
-	m.selectGroupRow(t, "backend")
-	loose := spawnTerminal(t, m)
-	nestShells(t, m)
-
-	if label := m.shellOriginLabel(nested); label != "" {
-		t.Fatalf("label = %q, want nothing where the session is the row above", label)
-	}
-	if label := m.shellOriginLabel(loose); label != filepath.Base(loose.Cwd) {
-		t.Fatalf("label = %q, want the directory %q", label, filepath.Base(loose.Cwd))
-	}
-}
-
-// The delete reads the store, not the rail: a shell the archived view holds
-// is still one this session owns, and skipping it would strand exactly the
-// shell nobody can see to clean up.
-func TestShellsOpenedForReachesWhatTheRailDoesNot(t *testing.T) {
-	m := buildModel(t)
-	createSession(t, m, "agent-one", t.TempDir(), "")
-	createSession(t, m, "agent-two", t.TempDir(), "")
-	m.selectSessionRow(t, "agent-one")
-	mine := spawnTerminal(t, m)
-	m.selectSessionRow(t, "agent-two")
-	theirs := spawnTerminal(t, m)
-
-	if err := m.store.SetArchived(mine.ID, true); err != nil {
-		t.Fatalf("archive: %v", err)
-	}
-	m.applyCmd(t, m.refreshCmd())
-
-	parent, ok := m.sessionByID(mine.ParentID)
-	if !ok || parent.Name != "agent-one" {
-		t.Fatalf("terminal %s lost its recorded session", mine.Name)
-	}
-	shells, err := m.shellsOpenedFor(parent.ID)
-	if err != nil {
-		t.Fatalf("shellsOpenedFor: %v", err)
-	}
-	if len(shells) != 1 || shells[0].ID != mine.ID {
-		t.Fatalf("want the archived terminal %s, got %+v", mine.Name, shells)
-	}
-	if shells[0].ID == theirs.ID {
-		t.Fatal("another session's terminal must not be swept in")
-	}
-}
-
-// Two groups can point at one checkout — a working group and a review group
-// over the same directory. The directory fallback picks the oldest agent in
-// it, and a shell never nests outside the group it carries, so the older
-// agent in the other group must not take the slot and leave the shell
-// looking parentless when its own group had one.
-func TestDirectoryFallbackIgnoresAnOlderAgentInAnotherGroup(t *testing.T) {
-	m := buildModel(t)
-	shared := t.TempDir()
-	if err := m.store.CreateGroup("review", shared); err != nil {
-		t.Fatalf("create group: %v", err)
-	}
-	if err := m.store.CreateGroup("work", shared); err != nil {
-		t.Fatalf("create group: %v", err)
-	}
-	m.applyCmd(t, m.refreshCmd())
-	createSession(t, m, "reviewer", shared, "review")
-	createSession(t, m, "worker", shared, "work")
-	m.selectSessionRow(t, "worker")
-	shell := spawnTerminal(t, m)
-
-	// The reviewer is the older of the two, so a fallback keyed by directory
-	// alone would hand it this shell and then reject it for its group.
-	for i := range m.sessions {
-		switch m.sessions[i].Name {
-		case "reviewer":
-			m.sessions[i].CreatedAt = time.Now().Add(-time.Hour)
-		case shell.Name:
-			m.sessions[i].ParentID = ""
-			m.sessions[i].Cwd = shared
-		}
-	}
-	nestShells(t, m)
-
-	parent, ok := m.sessionByID(m.shellParents[shell.ID])
-	if !ok {
-		t.Fatal("the shell should still find the agent in its own group")
-	}
-	if parent.Name != "worker" {
-		t.Fatalf("shell nested under %q, want worker", parent.Name)
 	}
 }

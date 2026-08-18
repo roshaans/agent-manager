@@ -531,7 +531,10 @@ func (m *Model) anyRunning() bool {
 // rather than sitting at a prompt. A shell has no turns for the status
 // engine to track, so the foreground command is the only signal there is.
 func (m *Model) sessionRunning(sess store.Session) bool {
-	if !m.isShell(sess.Tool) {
+	// A project script's own session, not any busy shell: a terminal tab is
+	// expected to have something in it, and marking that would put the
+	// indicator on most of the rail and tell nobody anything.
+	if !m.isShell(sess.Tool) || sess.RunScript == "" {
 		return false
 	}
 	// Two signals, because neither alone is enough. A command the shell

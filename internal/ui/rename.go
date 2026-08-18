@@ -2,6 +2,7 @@ package ui
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/YoanWai/agent-manager/internal/git"
@@ -94,6 +95,14 @@ func (m *Model) openRename() {
 	} else {
 		input.SetValue(entry.sess.Name)
 		tools := m.cfg.AgentTools()
+		shells := []string{}
+		for _, name := range m.cfg.ToolNames() {
+			if m.cfg.Tools[name].Shell {
+				shells = append(shells, name)
+			}
+		}
+		sort.Strings(shells)
+		tools = append(tools, shells...)
 		toolIndex := 0
 		for i, name := range tools {
 			if name == entry.sess.Tool {
@@ -273,6 +282,23 @@ func (m *Model) applyRename() (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		tool := m.renameTool()
+		prevTool := ""
+		if index >= 0 {
+			prevTool = m.sessions[index].Tool
+		}
+		toolChanged := tool != "" && tool != prevTool
+		if toolChanged && m.isShell(tool) {
+			kids, err := m.store.Children(m.rename.sessID)
+			if err != nil {
+				m.errBar.text = err.Error()
+				return m, nil
+			}
+			if len(kids) > 0 {
+				m.errBar.text = "move its terminals first"
+				return m, nil
+			}
+		}
 		// The worktree moves before the name is stored, so a directory or
 		// branch the new name cannot have leaves the rename card open with
 		// the reason instead of splitting the two apart.
@@ -289,12 +315,6 @@ func (m *Model) applyRename() (tea.Model, tea.Cmd) {
 			m.errBar.text = err.Error()
 			return m, nil
 		}
-		tool := m.renameTool()
-		prevTool := ""
-		if index >= 0 {
-			prevTool = m.sessions[index].Tool
-		}
-		toolChanged := tool != "" && tool != prevTool
 		if toolChanged {
 			if err := m.store.UpdateTool(m.rename.sessID, tool); err != nil {
 				m.errBar.text = err.Error()

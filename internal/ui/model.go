@@ -88,20 +88,12 @@ type Model struct {
 	setSnapshot func(id, snapshot string) error
 
 	sessions []store.Session
-	// rows is the flat list the cursor indexes. Its last pinnedShells entries
-	// are the Terminals block rather than part of the tree.
-	rows         []treeRow
-	pinnedShells int
-	// shellParents maps a shell to the session it hangs off, rebuilt with the
-	// rows so the nesting and the rows agree about what the view is showing.
-	shellParents map[string]string
+	rows     []treeRow
 	// chatOrder lists each checkout's chats in the order the rail draws and
-	// the keys number them, chatHeads maps a chat to the conversation whose
-	// block it is drawn in, and chatNumbers each chat of a family larger than
-	// one to the number the rail prints beside it. All three are rebuilt with
-	// the rows, so what is numbered is what is on screen.
+	// the keys number them, and chatNumbers each chat of a family larger than
+	// one to the number the rail prints beside it. Both are rebuilt with the
+	// rows, so what is numbered is what is on screen.
 	chatOrder   map[string][]string
-	chatHeads   map[string]string
 	chatNumbers map[string]int
 
 	groups         []string
@@ -162,10 +154,6 @@ type Model struct {
 	// their meta on a second line instead of alongside the name. Every
 	// rail frame reads it, so it lives here instead of the store.
 	comfortableRows bool
-	// shellsPinned mirrors the persisted terminal placement: shells gather
-	// in their own block instead of sitting among the agents. rebuildRows
-	// reads it on every rebuild, so it lives here instead of the store.
-	shellsPinned bool
 	// watchedGen is previewGen as of the last poll pass, so a selection
 	// that has not moved since can be recognised as at rest.
 	watchedGen        uint64
@@ -244,6 +232,8 @@ type Model struct {
 	// the frame is not repainted forever.
 	bannerPhase int
 
+	startupPhase     int
+	startupAnimating bool
 	// paneCommands is each session's foreground command as of the last poll,
 	// which is how a shell running something is told from one at a prompt.
 	paneCommands map[string]string
@@ -253,11 +243,6 @@ type Model struct {
 	// start a second one racing the first.
 	wavePhase int
 	waving    bool
-
-	// startupPhase advances the preview's launch loader. It rides the
-	// preview tick, which already runs at its fast cadence while a session
-	// is starting, rather than adding a timer of its own.
-	startupPhase int
 
 	update updateInfo
 
@@ -368,6 +353,7 @@ const (
 	actionRestore = "restore"
 	actionKill    = "kill"
 	actionRestart = "restart"
+	actionRevive  = "revive"
 )
 
 type confirmTarget struct {
@@ -427,7 +413,6 @@ type settingsState struct {
 	arrowStep       bool
 	comfortableRows bool
 	worktreeDefault bool
-	shellsPinned    bool
 	notifications   bool
 	notifyFinished  bool
 	themeAuto       bool
@@ -452,7 +437,6 @@ const (
 	settingsFieldFocusKey
 	settingsFieldArrowStep
 	settingsFieldWorktree
-	settingsFieldTerminals
 	settingsFieldNotify
 	settingsFieldNotifyFinish
 	settingsFieldCLIs
@@ -521,6 +505,7 @@ const previewSettle = 50 * time.Millisecond
 // agent that is producing output earns a fast cadence, one that is waiting
 // on a human does not.
 const (
+	startupInterval     = 80 * time.Millisecond
 	previewIntervalLive = 300 * time.Millisecond
 	previewIntervalCalm = 1200 * time.Millisecond
 	updateTickInterval  = 10 * time.Minute
@@ -542,16 +527,41 @@ func (m *Model) cursorBlink() tea.Cmd {
 // previewTickMsg drives that timer.
 type previewTickMsg struct{}
 
-// previewTick re-arms the preview timer at the cadence the selection earns.
-func (m *Model) previewTick() tea.Cmd {
-	interval := previewIntervalCalm
+type startupTickMsg struct{}
+
+func (m *Model) hasStartingRow() bool {
+	for _, row := range m.rows {
+		if !row.isGroup && row.sess.Status == status.Starting {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) previewInterval() time.Duration {
 	if sess, ok := m.selected(); ok {
 		switch sess.Status {
 		case status.Working, status.Starting:
-			interval = previewIntervalLive
+			return previewIntervalLive
 		}
 	}
-	return tea.Tick(interval, func(time.Time) tea.Msg { return previewTickMsg{} })
+	return previewIntervalCalm
+}
+
+func (m *Model) previewTick() tea.Cmd {
+	return tea.Tick(m.previewInterval(), func(time.Time) tea.Msg { return previewTickMsg{} })
+}
+
+func (m *Model) startStartupTick() tea.Cmd {
+	if m.startupAnimating || !m.hasStartingRow() {
+		return nil
+	}
+	m.startupAnimating = true
+	return m.startupTick()
+}
+
+func (m *Model) startupTick() tea.Cmd {
+	return tea.Tick(startupInterval, func(time.Time) tea.Msg { return startupTickMsg{} })
 }
 
 type errMsg struct{ err error }
@@ -586,7 +596,6 @@ func New(cfg config.Config, st *store.Store, driver *tmux.Driver, engine *status
 		focusOnEnter:        storedFocusOnEnter(st),
 		arrowStep:           storedArrowStep(st),
 		comfortableRows:     storedComfortableRows(st),
-		shellsPinned:        storedShellsPinned(st),
 		mode:                modeList,
 		update:              updateInfo{version: version},
 		dismissed:           loadDismissed(st),
@@ -745,7 +754,7 @@ func (m *Model) requestRefresh() {
 
 func (m *Model) Init() tea.Cmd {
 	m.syncPollInput()
-	return tea.Batch(m.syncPaneTheme(), m.refreshExistingSessionUX, m.checkForUpdate, m.checkFeed, m.updateTick(), m.bannerTick(), m.previewTick(), m.sweepPastes, m.pasteSweepTick(), m.prScanSoon())
+	return tea.Batch(m.syncPaneTheme(), m.refreshExistingSessionUX, m.checkForUpdate, m.checkFeed, m.updateTick(), m.bannerTick(), m.previewTick(), m.startStartupTick(), m.sweepPastes, m.pasteSweepTick(), m.prScanSoon())
 }
 
 // updateMsg carries the result of a GitHub release check. A failed check may
@@ -1137,8 +1146,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case previewTickMsg:
+	case startupTickMsg:
+		if !m.hasStartingRow() {
+			m.startupAnimating = false
+			return m, nil
+		}
 		m.startupPhase++
+		return m, m.startupTick()
+
+	case previewTickMsg:
 		// Only the list keeps a live pane on screen; review and the modal
 		// screens have no preview to feed, so they skip the capture and
 		// just keep the timer alive.
@@ -1209,7 +1225,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if sess, ok := m.selected(); ok && sess.ID != msg.procFor {
 			m.syncPollInput()
 			m.previewGen++
-			return m, tea.Batch(focusExit, wave, m.previewCmd(sess, m.previewGen), m.diffRefreshCmd())
+			return m, tea.Batch(focusExit, wave, m.previewCmd(sess, m.previewGen), m.diffRefreshCmd(), m.startStartupTick())
 		}
 		m.proc = msg.proc
 		m.procFor = msg.procFor
@@ -1220,7 +1236,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.watchSelection()
 		}
 		m.watchedGen = m.previewGen
-		return m, tea.Batch(focusExit, wave, m.diffRefreshCmd())
+		return m, tea.Batch(focusExit, wave, m.diffRefreshCmd(), m.startStartupTick())
 
 	case updateMsg:
 		if msg.manual {
@@ -1454,7 +1470,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.requestRefresh()
 			return m, nil
 		}
-		// Ctrl+R and Ctrl+O inside the session leave a marker before
+		// Ctrl+R and F3 inside the session leave a marker before
 		// detaching; consume it here and carry it out for the session just
 		// attached.
 		request, err := m.tmux.PendingRequest()
@@ -1644,17 +1660,6 @@ func rowsBelowRoot(rows []treeRow) []treeRow {
 	return rows
 }
 
-// treeRows is the list without the pinned shell block at its tail.
-func (m *Model) treeRows() []treeRow {
-	return m.rows[:len(m.rows)-m.pinnedShells]
-}
-
-// pinnedShell reports whether a session belongs in the Terminals block
-// rather than in its group.
-func (m *Model) pinnedShell(sess store.Session) bool {
-	return m.shellsPinned && m.isShell(sess.Tool)
-}
-
 func rowKey(entry treeRow) string {
 	if entry.isGroup {
 		return "g:" + entry.group
@@ -1674,44 +1679,70 @@ func (m *Model) rebuildRows() {
 	query := strings.ToLower(strings.TrimSpace(m.search))
 	prunedView := query != "" || m.statusFilter.active()
 
-	kept := make([]store.Session, 0, len(m.sessions))
-	for _, sess := range m.listedSessions() {
-		if query != "" && !matchesSearch(sess, query) {
-			continue
-		}
-		kept = append(kept, sess)
+	listed := m.listedSessions()
+	listedIDs := make(map[string]bool, len(listed))
+	for _, sess := range listed {
+		listedIDs[sess.ID] = true
 	}
-	m.shellParents = m.shellParentIndex(kept)
-	m.chatOrder, m.chatHeads, m.chatNumbers = m.chatIndex(kept)
-
+	byID := make(map[string]store.Session, len(m.sessions))
+	for _, sess := range m.sessions {
+		byID[sess.ID] = sess
+	}
+	m.chatOrder, m.chatNumbers = m.chatIndex(listed)
 	// m.sessions arrives ordered by the store (group, sort_order), so
 	// per-group slices inherit the user's manual order.
+	matched := make(map[string]bool, len(listed))
+	for _, sess := range listed {
+		if query == "" || matchesSearch(sess, query) {
+			matched[sess.ID] = true
+		}
+	}
+	// A parent the search itself missed still comes along to carry its
+	// matching children, in the store's order rather than after them.
+	carried := map[string]bool{}
+	for _, sess := range listed {
+		if !matched[sess.ID] || sess.ParentID == "" || !listedIDs[sess.ParentID] {
+			continue
+		}
+		carried[sess.ParentID] = true
+	}
 	sessionsByGroup := map[string][]store.Session{}
-	shellsBySession := map[string][]store.Session{}
-	chatsByHead := map[string][]store.Session{}
-	var shells []store.Session
-	for _, sess := range kept {
-		// Out of the group map as well as out of the tree, so a group whose
-		// only sessions are pinned reads as empty to the toggles that prune.
-		if m.pinnedShell(sess) {
-			shells = append(shells, sess)
+	childrenByParent := map[string][]store.Session{}
+	for _, sess := range listed {
+		if sess.ParentID != "" {
+			if _, ok := byID[sess.ParentID]; ok {
+				if matched[sess.ID] {
+					childrenByParent[sess.ParentID] = append(childrenByParent[sess.ParentID], sess)
+				}
+				continue
+			}
+		}
+		if matched[sess.ID] || carried[sess.ID] {
+			sessionsByGroup[sess.Group] = append(sessionsByGroup[sess.Group], sess)
+		}
+	}
+	walked := map[string]bool{}
+	for _, groupSessions := range sessionsByGroup {
+		for _, sess := range groupSessions {
+			walked[sess.ID] = true
+		}
+	}
+	orphaned := map[string]bool{}
+	// A child whose parent never made it into a group paints un-nested, in
+	// the store's order rather than the order the parent map happens to
+	// yield.
+	for _, sess := range listed {
+		if _, nested := childrenByParent[sess.ParentID]; !nested || walked[sess.ParentID] {
 			continue
 		}
-		// A shell that knows which session it was opened for hangs off it, so
-		// the worktree a terminal belongs to is the row above it rather than
-		// something to work out from a name. One without stays in its group.
-		if parent := m.shellParents[sess.ID]; parent != "" {
-			shellsBySession[parent] = append(shellsBySession[parent], sess)
-			continue
-		}
-		// The other chats on a checkout gather under the first one, so one
-		// checkout reads as one block however many conversations are open on
-		// it — the same nesting a terminal already gets, from the same link.
-		if head := m.chatHeads[sess.ID]; head != "" {
-			chatsByHead[head] = append(chatsByHead[head], sess)
+		if !matched[sess.ID] {
 			continue
 		}
 		sessionsByGroup[sess.Group] = append(sessionsByGroup[sess.Group], sess)
+		orphaned[sess.ParentID] = true
+	}
+	for parentID := range orphaned {
+		delete(childrenByParent, parentID)
 	}
 
 	paths := groupClosure(m.groups, m.sessions)
@@ -1752,24 +1783,15 @@ func (m *Model) rebuildRows() {
 
 	// Root is a standing move and spawn target; its sessions stay flat.
 	rows := make([]treeRow, 0, len(m.sessions)+len(paths)+1)
-	// A shell sits immediately after its session rather than at the end of
-	// the group: the tree guides read depth off the rows around them, so a
-	// child separated from its parent draws a branch off whoever precedes it.
-	// A checkout's other chats come first and its shells after, so the
-	// conversations read as peers and the terminals as subordinates.
-	var emit func(sess store.Session, depth int)
-	emit = func(sess store.Session, depth int) {
+	appendSession := func(sess store.Session, depth int) {
 		rows = append(rows, treeRow{sess: sess, depth: depth})
-		for _, chat := range chatsByHead[sess.ID] {
-			emit(chat, depth+1)
-		}
-		for _, shell := range shellsBySession[sess.ID] {
-			rows = append(rows, treeRow{sess: shell, depth: depth + 1})
+		for _, child := range childrenByParent[sess.ID] {
+			rows = append(rows, treeRow{sess: child, depth: depth + 1})
 		}
 	}
 	rows = append(rows, treeRow{isGroup: true, group: rootGroup})
 	for _, sess := range sessionsByGroup[""] {
-		emit(sess, 0)
+		appendSession(sess, 0)
 	}
 	var walk func(path string, depth int)
 	walk = func(path string, depth int) {
@@ -1778,7 +1800,7 @@ func (m *Model) rebuildRows() {
 			return
 		}
 		for _, sess := range sessionsByGroup[path] {
-			emit(sess, depth+1)
+			appendSession(sess, depth+1)
 		}
 		for _, child := range children[path] {
 			walk(child, depth+1)
@@ -1787,12 +1809,6 @@ func (m *Model) rebuildRows() {
 	for _, root := range children[""] {
 		walk(root, 0)
 	}
-	// Depth 0 closes every tree branch above the block, keeping its rows out
-	// of the guide columns.
-	for _, sess := range shells {
-		rows = append(rows, treeRow{sess: sess})
-	}
-	m.pinnedShells = len(shells)
 
 	m.rows = rows
 	if previousKey != "" {

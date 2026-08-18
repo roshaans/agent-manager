@@ -15,6 +15,7 @@ import (
 )
 
 type fakeTerminalCommands struct {
+	closedID    string
 	listed      []sessioncmd.Terminal
 	created     sessioncmd.Terminal
 	screen      sessioncmd.TerminalScreen
@@ -56,6 +57,11 @@ type fakeSessionCommands struct {
 func (f *fakeSessionCommands) Create(_ string, opts sessioncmd.CreateSessionOptions) (sessioncmd.Session, error) {
 	f.createdOpts = opts
 	return f.created, f.err
+}
+
+func (f *fakeTerminalCommands) Close(_ string, id string) error {
+	f.closedID = id
+	return f.err
 }
 
 func connect(t *testing.T, configDir, sessionID string) *mcp.ClientSession {
@@ -141,20 +147,18 @@ func TestServerTeachesProactiveTerminalWorkflow(t *testing.T) {
 	session := connect(t, t.TempDir(), "abc123")
 	instructions := session.InitializeResult().Instructions
 	for _, want := range []string{
-		"Do not wait for the user",
-		"long-running",
+		"SSH",
+		"one-shot",
 		"list_terminals",
 		"create_terminal",
-		"send_terminal",
-		"read_terminal",
-		"Reuse a relevant running terminal",
+		"close_terminal",
+		"nests under this session",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("server instructions do not teach %q:\n%s", want, instructions)
 		}
 	}
 }
-
 func TestTerminalDescriptionsTeachWhenAndHowToChainTools(t *testing.T) {
 	session := connect(t, t.TempDir(), "abc123")
 	listed, err := session.ListTools(context.Background(), nil)
@@ -166,8 +170,9 @@ func TestTerminalDescriptionsTeachWhenAndHowToChainTools(t *testing.T) {
 		descriptions[tool.Name] = tool.Description
 	}
 	for tool, wants := range map[string][]string{
-		"list_terminals":  {"Call proactively", "Reuse", "create_terminal"},
-		"create_terminal": {"without waiting for the user", "send_terminal"},
+		"list_terminals":  {"human-visible", "Reuse", "create_terminal"},
+		"create_terminal": {"SSH", "one-shot", "nests", "close_terminal"},
+		"close_terminal":  {"finished", "kills", "SSH"},
 		"send_terminal":   {"create_terminal", "read_terminal", "executes on the user's machine"},
 		"read_terminal":   {"after send_terminal", "monitor ongoing work"},
 	} {
@@ -178,7 +183,6 @@ func TestTerminalDescriptionsTeachWhenAndHowToChainTools(t *testing.T) {
 		}
 	}
 }
-
 func TestTerminalToolsExposeStructuredResultsAndForwardArguments(t *testing.T) {
 	group := "backend"
 	fake := &fakeTerminalCommands{
@@ -512,4 +516,37 @@ func TestCreateSessionAnnotationsDescribeAnAgentSetLoose(t *testing.T) {
 		return
 	}
 	t.Fatal("create_session is not registered")
+}
+
+func TestCloseTerminalForwardsID(t *testing.T) {
+	fake := &fakeTerminalCommands{}
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", fake, &fakeSessionCommands{}))
+	text, isError := callText(t, session, "close_terminal", map[string]any{"terminal_id": "a1b2c3d4"})
+	if isError || !strings.Contains(text, "closed terminal a1b2c3d4") {
+		t.Fatalf("close_terminal = %q, isError=%v", text, isError)
+	}
+	if fake.closedID != "a1b2c3d4" {
+		t.Fatalf("closed id = %q", fake.closedID)
+	}
+}
+
+func TestCreateTerminalForwardsNest(t *testing.T) {
+	fake := &fakeTerminalCommands{
+		created: sessioncmd.Terminal{ID: "e5f6a7b8", Name: "terminal-e5f6"},
+	}
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", fake, &fakeSessionCommands{}))
+
+	if created := callTool(t, session, "create_terminal", map[string]any{}); created.IsError {
+		t.Fatalf("create_terminal no args = %+v", created)
+	}
+	if fake.createdOpts.Nest != nil {
+		t.Fatalf("omitted nest = %+v, want nil", fake.createdOpts.Nest)
+	}
+
+	if created := callTool(t, session, "create_terminal", map[string]any{"nest": false}); created.IsError {
+		t.Fatalf("create_terminal nest false = %+v", created)
+	}
+	if fake.createdOpts.Nest == nil || *fake.createdOpts.Nest {
+		t.Fatalf("nest false = %+v", fake.createdOpts.Nest)
+	}
 }

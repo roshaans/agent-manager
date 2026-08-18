@@ -1294,102 +1294,265 @@ func TestRestartLaunchIsAFreshStartForEveryShippedTool(t *testing.T) {
 	}
 }
 
-// Delete is the key that does not come back, so a session's terminals go
-// with it rather than outliving the row they hung off. The dialog names
-// them: nothing else can, since a shell's status never leaves idle.
-func TestDeleteTakesTheTerminalsOpenedForASession(t *testing.T) {
+func TestKillAgentIncludesChildren(t *testing.T) {
 	m := buildModel(t)
-	createSession(t, m, "agent-one", t.TempDir(), "")
-	createSession(t, m, "agent-two", t.TempDir(), "")
-	m.selectSessionRow(t, "agent-one")
-	first := spawnTerminal(t, m)
-	second := spawnTerminal(t, m)
-	m.selectSessionRow(t, "agent-two")
-	bystander := spawnTerminal(t, m)
-
-	m.selectSessionRow(t, "agent-one")
-	m.prepareDelete()
-
-	if len(m.confirm.sessions) != 3 {
-		t.Fatalf("confirm targets %d sessions, want the agent and its 2 terminals", len(m.confirm.sessions))
-	}
-	// The shells lead: a worktree is only removed once nothing is left in
-	// it, so a terminal still in the store would keep the directory alive.
-	if last := m.confirm.sessions[len(m.confirm.sessions)-1]; last.Name != "agent-one" {
-		t.Fatalf("the session should be deleted last, got %q", last.Name)
-	}
-	for _, want := range []string{first.Name, second.Name} {
-		if !strings.Contains(m.confirm.label, want) {
-			t.Fatalf("the dialog should name %q:\n%s", want, m.confirm.label)
-		}
-	}
-
-	_, cmd := m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	m.applyCmd(t, cmd)
-
-	for _, gone := range []store.Session{first, second} {
-		if m.tmux.Exists(gone.ID) {
-			t.Fatalf("terminal %s should be killed with its session", gone.Name)
-		}
-	}
-	if !m.tmux.Exists(bystander.ID) {
-		t.Fatalf("terminal %s belongs to another session and should survive", bystander.Name)
-	}
-	all, _ := m.store.ListSessions(true)
-	if len(all) != 2 {
-		t.Fatalf("want agent-two and its terminal left, got %d rows", len(all))
-	}
-}
-
-// The reason the terminals go first: a shell left in the store counts as a
-// session using the directory, and would keep alive the worktree its own
-// session was deleted to clean up.
-func TestDeleteFreesAWorktreeItsTerminalWasHolding(t *testing.T) {
-	m := buildModel(t)
-	repo := seedRepo(t)
-	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-owner", Directory: repo, Worktree: true}); err != nil {
-		t.Fatalf("spawn: %v", err)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
-	sessions, _ := m.store.ListSessions(true)
-	worktree := sessions[0].Cwd
-
-	m.selectSessionRow(t, "wt-owner")
-	spawnTerminal(t, m)
-
-	deleteSession(t, m, "wt-owner")
-	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
-		t.Fatalf("worktree %s should be gone once its terminal went with the session", worktree)
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	_, cmd := m.killSelected()
+	m.applyCmd(t, cmd)
+	if !strings.Contains(m.confirm.label, "terminal") {
+		t.Fatalf("confirm should name terminals: %q", m.confirm.label)
+	}
+	ids := map[string]bool{}
+	for _, sess := range m.confirm.sessions {
+		ids[sess.ID] = true
+	}
+	if !ids[shell.ID] {
+		t.Fatal("kill confirm omitted the child")
 	}
 }
 
-// Kill and archive both come back, so neither takes a terminal with it:
-// the shell costs nothing to keep and may be running something.
-func TestKillAndArchiveLeaveTheTerminalsAlone(t *testing.T) {
-	for _, probe := range []struct {
-		name string
-		ask  func(*Model) (tea.Model, tea.Cmd)
-	}{
-		{"kill", (*Model).killSelected},
-		{"archive", (*Model).archiveSelected},
-	} {
-		t.Run(probe.name, func(t *testing.T) {
-			m := buildModel(t)
-			createSession(t, m, "agent-one", t.TempDir(), "")
-			m.selectSessionRow(t, "agent-one")
-			shell := spawnTerminal(t, m)
+func TestKillChildIsSingleSession(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	m.selectSessionRow(t, shell.Name)
+	m.killSelected()
+	if len(m.confirm.sessions) != 1 || m.confirm.sessions[0].ID != shell.ID {
+		t.Fatalf("child kill = %+v", m.confirm.sessions)
+	}
+}
 
-			m.selectSessionRow(t, "agent-one")
-			probe.ask(m)
-			if len(m.confirm.sessions) != 1 {
-				t.Fatalf("%s targets %d sessions, want the agent alone", probe.name, len(m.confirm.sessions))
-			}
-			_, cmd := m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-			m.applyCmd(t, cmd)
+func TestArchiveAgentPersistsEveryChild(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	m.archiveSelected()
+	_, cmd := m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	child, err := m.store.Get(shell.ID)
+	if err != nil || !child.Archived {
+		t.Fatalf("child archived=%v err=%v", child.Archived, err)
+	}
+}
 
-			if !m.tmux.Exists(shell.ID) {
-				t.Fatalf("%s should leave the terminal running", probe.name)
-			}
-		})
+func TestDeleteRemovesChildrenBeforeTheirAgent(t *testing.T) {
+	agent := store.Session{ID: "agent"}
+	child := store.Session{ID: "sh", ParentID: "agent"}
+	ordered := childrenFirst([]store.Session{agent, child})
+	if len(ordered) != 2 || ordered[0].ID != child.ID || ordered[1].ID != agent.ID {
+		t.Fatalf("order = %+v", ordered)
+	}
+}
+
+func TestKillDeadAgentStillKillsItsLiveChild(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	agent := m.sessionRows()[0]
+	if err := m.tmux.Kill(agent.ID); err != nil {
+		t.Fatalf("kill agent: %v", err)
+	}
+	m.selectSessionRow(t, "coder")
+	_, cmd := m.killSelected()
+	m.applyCmd(t, cmd)
+	if m.mode != modeConfirmDelete {
+		t.Fatalf("mode = %v, want the kill confirm (errBar %q)", m.mode, m.errBar.text)
+	}
+	_, cmd = m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	if m.tmux.Exists(shell.ID) {
+		t.Fatal("live child survived the kill")
+	}
+}
+
+func TestReviveRunningAgentRevivesDeadChild(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	if err := m.tmux.Kill(shell.ID); err != nil {
+		t.Fatalf("kill child: %v", err)
+	}
+	m.selectSessionRow(t, "coder")
+	_, cmd := m.reviveSelected()
+	m.applyCmd(t, cmd)
+	if m.mode != modeConfirmDelete {
+		t.Fatalf("mode = %v, want the revive confirm", m.mode)
+	}
+	_, cmd = m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	if !m.tmux.Exists(shell.ID) {
+		t.Fatal("child still dead")
+	}
+}
+
+func TestRestoreAgentUnarchivesEveryChild(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	agent := m.sessionRows()[0]
+	m.selectSessionRow(t, "coder")
+	m.archiveSelected()
+	_, cmd := m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	m.showArchived = true
+	m.applyCmd(t, m.refreshCmd())
+	m.selectSessionRow(t, "coder")
+	m.restoreSelected()
+	_, cmd = m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	for _, id := range []string{agent.ID, shell.ID} {
+		got, err := m.store.Get(id)
+		if err != nil || got.Archived {
+			t.Fatalf("%s archived=%v err=%v", id, got.Archived, err)
+		}
+		if !m.tmux.Exists(id) {
+			t.Fatalf("%s not running", id)
+		}
+	}
+}
+
+func TestDeleteAgentIncludesChildren(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	m.prepareDelete()
+	ids := map[string]bool{}
+	for _, sess := range m.confirm.sessions {
+		ids[sess.ID] = true
+	}
+	if !ids[shell.ID] {
+		t.Fatal("delete confirm omitted the child")
+	}
+	agent := m.sessionRows()[0]
+	_, cmd := m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	for _, id := range []string{shell.ID, agent.ID} {
+		if _, err := m.store.Get(id); err == nil {
+			t.Fatalf("%s row survived the delete", id)
+		}
+		if m.tmux.Exists(id) {
+			t.Fatalf("%s pane survived the delete", id)
+		}
+	}
+}
+
+func TestReviveAgentIncludesDeadChildren(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	shell := spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	coder, ok := m.selected()
+	if !ok {
+		t.Fatal("coder row missing")
+	}
+	if err := m.tmux.Kill(shell.ID); err != nil {
+		t.Fatalf("kill child: %v", err)
+	}
+	if err := m.tmux.Kill(coder.ID); err != nil {
+		t.Fatalf("kill agent: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	m.selectSessionRow(t, "coder")
+	m.reviveSelected()
+	ids := map[string]bool{}
+	for _, sess := range m.confirm.sessions {
+		ids[sess.ID] = true
+	}
+	if !ids[shell.ID] {
+		t.Fatal("revive confirm omitted the child")
+	}
+	_, cmd := m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m.applyCmd(t, cmd)
+	if !m.tmux.Exists(coder.ID) || !m.tmux.Exists(shell.ID) {
+		t.Fatal("confirm should revive the agent and its dead children")
+	}
+}
+
+func TestRestartAgentStaysSingleSession(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	m.restartSelected()
+	if len(m.confirm.sessions) != 1 {
+		t.Fatalf("restart confirm = %+v", m.confirm.sessions)
+	}
+}
+
+func TestKillAgentConfirmNamesExtraTerminals(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	if err := m.store.CreateGroup("backend", dir); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	createSession(t, m, "coder", dir, "backend")
+	m.selectSessionRow(t, "coder")
+	spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	spawnTerminal(t, m)
+	m.selectSessionRow(t, "coder")
+	m.killSelected()
+	want := "kill coder and 2 terminals? frees their RAM, v revives them."
+	if m.confirm.label != want {
+		t.Fatalf("label = %q, want %q", m.confirm.label, want)
 	}
 }

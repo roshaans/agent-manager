@@ -58,8 +58,10 @@ func groupWorktreeIndex(value string) int {
 }
 
 type groupOption struct {
-	path  string
-	depth int
+	path   string
+	depth  int
+	sessID string
+	name   string
 }
 
 type form struct {

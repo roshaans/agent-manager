@@ -54,7 +54,7 @@ func (m *Model) chatOrigin() (store.Session, bool) {
 	if !m.isShell(entry.sess.Tool) {
 		return entry.sess, true
 	}
-	if parent, linked := m.sessionByID(m.shellParents[entry.sess.ID]); linked {
+	if parent, linked := m.sessionByID(entry.sess.ParentID); linked && !m.isShell(parent.Tool) {
 		return parent, true
 	}
 	// A shell whose link this view cannot resolve still carries the
@@ -98,10 +98,11 @@ func (m *Model) openChat() (tea.Model, tea.Cmd) {
 		Name:      m.nextChatName(m.chatRoot(source)),
 		Group:     source.Group,
 		Directory: source.Cwd,
-		// The session it was actually opened from, not the family's first:
-		// where a conversation came from is worth keeping, and drawing the
-		// family as one flat block is the rail's job rather than the store's.
-		ParentID:       source.ID,
+		// A checkout's conversations sit one level deep, the way a terminal
+		// opened from a terminal joins the agent rather than the terminal:
+		// the tree allows a parent no parent of its own, and a family of
+		// peers is what this is.
+		ParentID:       chatAnchor(source),
 		WorktreeRepo:   source.WorktreeRepo,
 		WorktreeBranch: source.WorktreeBranch,
 	}); err != nil {
@@ -144,20 +145,24 @@ func (m *Model) nextChatName(root string) string {
 	return base + "-" + spawn.NewID()[:4]
 }
 
-// chatRoot is the session a chat's family hangs off: the first conversation
-// opened on the checkout, found by following ParentID up. A session opened on
-// nothing is its own root, and so is one whose parent this view cannot see —
-// a family narrowed by a search or a status filter re-roots on the first
-// member still on screen rather than pointing at a row nobody can reach.
+// chatAnchor is what a new chat opened from this session hangs off: the
+// session itself when it heads its checkout, or whatever it hangs off when it
+// does not. Nesting is one level deep by construction, so this is also the
+// family's first conversation.
+func chatAnchor(sess store.Session) string {
+	if sess.ParentID != "" {
+		return sess.ParentID
+	}
+	return sess.ID
+}
+
+// chatRoot is the conversation a chat's family hangs off, which with one
+// level of nesting is its parent, or itself when it is the parent. A parent
+// this view cannot see leaves the chat heading its own family rather than
+// pointing at a row nobody can reach.
 func (m *Model) chatRoot(sess store.Session) string {
-	// One hop per session at most: a chain that somehow closed on itself
-	// stops at the row it started from instead of spinning.
-	for hops := 0; hops < len(m.sessions)+1; hops++ {
-		parent, ok := m.sessionByID(sess.ParentID)
-		if !ok || m.isShell(parent.Tool) || parent.Group != sess.Group {
-			return sess.ID
-		}
-		sess = parent
+	if parent, ok := m.sessionByID(sess.ParentID); ok && !m.isShell(parent.Tool) && parent.Group == sess.Group {
+		return parent.ID
 	}
 	return sess.ID
 }
@@ -170,29 +175,28 @@ func (m *Model) chatRoot(sess store.Session) string {
 // Terminals are never promoted: a shell heading a family would be a row the
 // chat keys skip and the strip cannot name.
 func (m *Model) adoptChildrenOf(sess store.Session) error {
-	heir := sess.ParentID
-	if heir == "" {
-		sessions, err := m.store.ListSessions(true)
-		if err != nil {
-			return err
+	kids, err := m.store.Children(sess.ID)
+	if err != nil {
+		return err
+	}
+	var eldest store.Session
+	for _, kid := range kids {
+		if m.isShell(kid.Tool) {
+			continue
 		}
-		var eldest store.Session
-		for _, other := range sessions {
-			if other.ParentID != sess.ID || m.isShell(other.Tool) {
-				continue
-			}
-			if eldest.ID == "" || other.CreatedAt.Before(eldest.CreatedAt) {
-				eldest = other
-			}
-		}
-		if eldest.ID != "" {
-			if err := m.store.SetParent(eldest.ID, sess.ParentID); err != nil {
-				return err
-			}
-			heir = eldest.ID
+		if eldest.ID == "" || kid.CreatedAt.Before(eldest.CreatedAt) {
+			eldest = kid
 		}
 	}
-	return m.store.AdoptChildren(sess.ID, heir)
+	if eldest.ID == "" {
+		return nil
+	}
+	// The tree allows the heir no parent of its own, so it takes the deleted
+	// row's place at the head and the rest of the family hangs off it.
+	if err := m.store.SetParent(eldest.ID, ""); err != nil {
+		return err
+	}
+	return m.store.AdoptChildren(sess.ID, eldest.ID)
 }
 
 // chatFamily is the conversations open on one checkout, in the order the rail
@@ -227,7 +231,7 @@ func (m *Model) selectedChat() (store.Session, bool) {
 	if !m.isShell(entry.sess.Tool) {
 		return entry.sess, true
 	}
-	return m.sessionByID(m.shellParents[entry.sess.ID])
+	return m.sessionByID(entry.sess.ParentID)
 }
 
 // cycleChat moves to the next or previous chat of the checkout the cursor
@@ -369,22 +373,19 @@ func (m *Model) chatSwitch(target int) (tea.Model, tea.Cmd) {
 //
 // A conversation with no siblings carries neither a head nor a number: there
 // is no block to draw and nothing to tell apart.
-func (m *Model) chatIndex(sessions []store.Session) (order map[string][]string, heads map[string]string, numbers map[string]int) {
+func (m *Model) chatIndex(sessions []store.Session) (order map[string][]string, numbers map[string]int) {
 	kept := map[string]bool{}
 	for _, sess := range sessions {
 		kept[sess.ID] = true
 	}
 	// Roots are resolved against the rows on screen: a parent the view is
-	// holding back is not a parent this tree can draw a branch to.
+	// holding back is not one this tree can count from.
 	rootOf := func(sess store.Session) string {
-		for hops := 0; hops < len(sessions)+1; hops++ {
-			parent, ok := m.sessionByID(sess.ParentID)
-			if !ok || !kept[parent.ID] || m.isShell(parent.Tool) || parent.Group != sess.Group {
-				return sess.ID
-			}
-			sess = parent
+		parent, ok := m.sessionByID(sess.ParentID)
+		if !ok || !kept[parent.ID] || m.isShell(parent.Tool) || parent.Group != sess.Group {
+			return sess.ID
 		}
-		return sess.ID
+		return parent.ID
 	}
 
 	seen := []string{}
@@ -399,7 +400,7 @@ func (m *Model) chatIndex(sessions []store.Session) (order map[string][]string, 
 		}
 		members[root] = append(members[root], sess)
 	}
-	order, heads, numbers = map[string][]string{}, map[string]string{}, map[string]int{}
+	order, numbers = map[string][]string{}, map[string]int{}
 	for _, root := range seen {
 		chats := members[root]
 		ids := make([]string, 0, len(chats))
@@ -412,17 +413,9 @@ func (m *Model) chatIndex(sessions []store.Session) (order map[string][]string, 
 		}
 		for i, chat := range chats {
 			numbers[chat.ID] = i + 1
-			// Every member of a family sits one level under its first
-			// conversation, however deep the chain that links them: a chat
-			// opened from a chat is a peer on the same checkout, not a
-			// grandchild, and a rail that marched right for each one would
-			// run out of columns saying nothing.
-			if chat.ID != root {
-				heads[chat.ID] = root
-			}
 		}
 	}
-	return order, heads, numbers
+	return order, numbers
 }
 
 // chatNumber is the position the rail prints beside a chat, or zero for one
