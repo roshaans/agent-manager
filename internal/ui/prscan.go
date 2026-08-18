@@ -534,9 +534,9 @@ func (m *Model) prChip(sess store.Session) string {
 		label += "+" + strconv.Itoa(extra)
 	}
 	if pr.IsDraft {
-		return pill(label, colorSubtle)
+		return roundPill(label, colorSubtle)
 	}
-	return pill(label, colorAccent2)
+	return roundPill(label, colorAccent2)
 }
 
 // fetchRemote is the seam tests swap, so a pass under test never reaches a
@@ -569,7 +569,7 @@ func (m *Model) syncChip(sess store.Session) string {
 		label += "↓" + strconv.Itoa(in.behind)
 	}
 	if in.behind > 0 {
-		return pill(label, colorWaiting)
+		return roundPill(label, colorWaiting)
 	}
-	return pill(label, colorSubtle)
+	return roundPill(label, colorSubtle)
 }
