@@ -225,13 +225,25 @@ func pill(text string, fg lipgloss.Color) string {
 	return chipStyle.Foreground(fg).Render(text)
 }
 
+// shadedPill renders a chip on its own fill rather than the one every other
+// chip shares: the surface lifted toward the accent, so a pull request number
+// reads as a class of its own while still being a chip. Resolved per call so
+// it follows the live theme and color profile the way annotationBg does.
+func shadedPill(text string, fg lipgloss.Color) string {
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color(mix(current.Surface, current.Accent2, 0.30))).
+		Foreground(fg).
+		Padding(0, 1).
+		Render(text)
+}
+
 // roundPill renders a chip inside rounded ornaments instead of on a fill.
 //
-// What a row says about a pull request, or about how far its checkout has
-// drifted, is news from somewhere else — GitHub, or a remote — where the tool
-// and branch beside it are facts about the session itself. A light bracket
-// keeps the two classes apart at a glance without a second colour, and the
-// ornaments are ordinary Unicode rather than a patched font's private range.
+// How far a checkout has drifted from its remote is not a fact about the
+// session the way its tool and branch are, and it is not a thing that lives
+// anywhere but in the two repositories being compared. A light bracket keeps
+// it apart from the chips around it, and the ornaments are ordinary Unicode
+// rather than a patched font's private range.
 func roundPill(text string, fg lipgloss.Color) string {
 	edge := lipgloss.NewStyle().Foreground(colorSubtle)
 	return edge.Render("❨") + lipgloss.NewStyle().Foreground(fg).Render(text) + edge.Render("❩")
