@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/YoanWai/agent-manager/internal/config"
+	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -15,7 +16,7 @@ import (
 
 func TestDefaultToolFallsBackWhenSettingStale(t *testing.T) {
 	m := buildModel(t)
-	if err := m.store.SetSetting("default_tool", "deleted-tool"); err != nil {
+	if err := m.store.SetSetting(store.SettingDefaultTool, "deleted-tool"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	if got := m.defaultTool(); got != "claude" {
@@ -86,7 +87,7 @@ func TestSettingsWorktreeDefaultPersists(t *testing.T) {
 	}
 	m.handleSettingsKey(tea.KeyMsg{Type: tea.KeyRight})
 	m.handleSettingsKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if chosen, err := m.store.Setting(worktreeSetting); err != nil || chosen != "on" {
+	if chosen, err := m.store.Setting(store.SettingWorktreeDefault); err != nil || chosen != "on" {
 		t.Fatalf("want stored on, got %q err %v", chosen, err)
 	}
 	if !m.defaultWorktree() {
@@ -269,7 +270,7 @@ func TestSettingsCLIPickerHidesFromNewSessions(t *testing.T) {
 	if m.settings.cliPicker {
 		t.Fatal("esc should leave the picker")
 	}
-	raw, err := m.store.Setting(hiddenToolsSetting)
+	raw, err := m.store.Setting(store.SettingHiddenTools)
 	if err != nil || raw != "codex" {
 		t.Fatalf("stored hidden_tools = %q err %v, want codex", raw, err)
 	}
@@ -358,19 +359,6 @@ func TestCLIPickerShowsSupportAction(t *testing.T) {
 	}
 	if !strings.Contains(out, "more will be supported soon") {
 		t.Fatalf("missing support note:\n%s", out)
-	}
-}
-
-func TestParseFormatHiddenTools(t *testing.T) {
-	if got := parseHiddenTools(""); got != nil {
-		t.Fatalf("empty parse = %v", got)
-	}
-	got := parseHiddenTools("codex, grok")
-	if !got["codex"] || !got["grok"] || len(got) != 2 {
-		t.Fatalf("parse = %v", got)
-	}
-	if formatHiddenTools(map[string]bool{"grok": true, "codex": true}) != "codex,grok" {
-		t.Fatalf("format should sort: %q", formatHiddenTools(map[string]bool{"grok": true, "codex": true}))
 	}
 }
 

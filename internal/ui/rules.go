@@ -79,7 +79,7 @@ func (m *Model) rulesFiles(dir, root string) (string, []rules.File) {
 	}
 
 	var specs []string
-	for _, name := range sortedToolNames(m.cfg) {
+	for _, name := range m.cfg.AgentTools() {
 		specs = append(specs, m.rulesSpecs(name)...)
 	}
 	var found []rules.File

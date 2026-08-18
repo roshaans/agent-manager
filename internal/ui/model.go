@@ -2,8 +2,6 @@ package ui
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
 	"sort"
@@ -15,6 +13,7 @@ import (
 	"github.com/YoanWai/agent-manager/internal/feed"
 	"github.com/YoanWai/agent-manager/internal/git"
 	"github.com/YoanWai/agent-manager/internal/hooks"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/sysstat"
@@ -72,6 +71,9 @@ type Model struct {
 	hooks  *hooks.Manager
 	gitDrv *git.Driver
 	engine *status.Engine
+	// spawner is every path that makes a session: the form, quick spawn, a
+	// shell, a fork, a project's run script.
+	spawner *spawn.Spawner
 
 	// setSnapshot writes a session's pane capture before archive or kill
 	// takes the window; a seam so snapshot failures can be exercised
@@ -566,6 +568,10 @@ func New(cfg config.Config, st *store.Store, driver *tmux.Driver, engine *status
 		whatsNewVersion:     loadWhatsNewVersion(st),
 		whatsNewFromVersion: loadWhatsNewFromVersion(st),
 	}
+	// Built after the model exists: the pane size a session boots at is the
+	// preview panel's, which is a function of the model's current geometry.
+	model.spawner = spawn.New(cfg, st, driver, hookManager, gitDriver,
+		func() (int, int) { return model.previewPaneWidth(), model.previewPaneHeight() })
 	if dir, err := config.Dir(); err == nil {
 		cached := update.Cached(dir, version)
 		model.update.latest = cached.Latest
@@ -848,7 +854,7 @@ func (m *Model) refreshExistingSessionUX() tea.Msg {
 		// errors harmlessly and must not abort the rest, and the bindings that
 		// matter are already installed above.
 		_ = m.tmux.RefreshChrome(sess.ID)
-		_ = m.tmux.SetLabel(sess.ID, sessionLabel(sess.Group, sess.Name))
+		_ = m.tmux.SetLabel(sess.ID, spawn.SessionLabel(sess.Group, sess.Name))
 	}
 	return nil
 }
@@ -1831,12 +1837,4 @@ func matchesSearch(sess store.Session, query string) bool {
 		strings.Contains(strings.ToLower(sess.Tool), query) ||
 		strings.Contains(strings.ToLower(sess.Group), query) ||
 		strings.Contains(strings.ToLower(sess.Status), query)
-}
-
-func newID() string {
-	buf := make([]byte, 4)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(time.Now().Format("150405")))
-	}
-	return hex.EncodeToString(buf)
 }

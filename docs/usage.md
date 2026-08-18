@@ -196,6 +196,7 @@ Every session of an MCP-capable tool carries the agent-manager MCP server on spa
 | `review_repo` | Declare the repo or worktree under review |
 | `review_base` | Declare or clear the review base ref |
 | `review_mode` | Select the diff scope review opens with |
+| `create_session` | Create another agent session, with a first task and optionally its own worktree |
 | `list_terminals` | List active managed terminals and their current directories |
 | `create_terminal` | Open a terminal beside the calling agent, or in an explicit group or directory |
 | `send_terminal` | Submit a command or send exact keys to a running terminal |
@@ -204,6 +205,10 @@ Every session of an MCP-capable tool carries the agent-manager MCP server on spa
 `create_terminal` defaults to the calling agent's group and live pane directory. An explicit group uses that group's nearest inherited default path; an explicit directory wins over both. `send_terminal` accepts exactly one of a command, which is pasted and submitted with Enter, or a sequence of tmux key names such as `C-c`, `Up`, and `Enter`. `read_terminal` returns the current screen rather than unlimited scrollback.
 
 The server's MCP initialization instructions teach agents to use this workflow without waiting for an explicit request: list and reuse a terminal before long-running, output-heavy or continuously monitored work; create one only when needed; send the command; then read its screen until the result is clear. The same guidance is repeated in the individual tool descriptions for clients that expose tools but not server instructions. Short one-shot commands stay in the agent's normal execution path when a separate persistent terminal adds no value.
+
+`create_session` starts another agent beside the calling one. It needs a first task; everything else defaults the way `create_terminal` does — the caller's group and current directory, and the CLI chosen in Settings. `worktree` gives the new session its own git worktree, branch and `$AGENT_MANAGER_PORT` block, so two agents can work the same repository without touching each other's tree; left unset it follows the target group's spawn-in-worktree setting, and an explicit request in a directory that is not a repository is refused rather than quietly downgraded. Without a `name` the new session is asked to name itself from its work, exactly as a quick-prompt spawn is. A session created this way records the agent that asked for it.
+
+The new session starts on its prompt immediately and works on its own, so the prompt has to carry everything it needs to begin — the tool description and the server instructions both say so, since a client may expose one, the other, or both. Nothing bounds how many sessions get created or how deep the chain goes: a session created this way carries the same tools, so it can create sessions too. Because the manager only sees the new row on its next poll, a session created this way shows its generated name for a moment before the name its agent picks arrives.
 
 Sending a command to a terminal executes it on the user's machine. Agents should treat `send_terminal` with the same care as typing into an attached shell: inspect the target returned by `list_terminals`, avoid destructive commands unless the user asked for them, and read the result before continuing.
 

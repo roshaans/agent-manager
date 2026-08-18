@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/YoanWai/agent-manager/internal/atomicfile"
 	"github.com/YoanWai/agent-manager/internal/status"
 )
 
@@ -97,6 +98,13 @@ func settingsContent() ([]byte, error) {
 
 // EnsureSettings writes the hook settings file, refreshing it when the
 // wanted content changed (e.g. after an upgrade), and returns its path.
+//
+// One file shared by every session, and now by more than one process: a
+// session created by the commands an agent runs builds its launch here while
+// the manager may be doing the same. The content check makes the rewrite
+// rare and identical when it happens, and the replacement is atomic, so an
+// agent launching mid-upgrade reads one whole version of the file or the
+// other rather than a truncated one.
 func (m *Manager) EnsureSettings() (string, error) {
 	if err := os.MkdirAll(m.dir, 0o755); err != nil {
 		return "", err
@@ -113,7 +121,7 @@ func (m *Manager) EnsureSettings() (string, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	if err := os.WriteFile(path, wanted, 0o644); err != nil {
+	if err := atomicfile.WriteFile(path, wanted, 0o644); err != nil {
 		return "", err
 	}
 	return path, nil

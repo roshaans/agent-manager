@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/project"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
@@ -187,9 +188,9 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 	// just started today's.
 	replaced := m.retireRunSessions(dir, name)
 	// Probed before the script starts, or its own server is what we find.
-	busy := settings.BlockBusy(portKey(dir))
+	busy := settings.BlockBusy(project.PortKey(dir))
 	sess := store.Session{
-		ID:        newID(),
+		ID:        spawn.NewID(),
 		Name:      label,
 		Tool:      toolName,
 		Cwd:       dir,
@@ -198,8 +199,8 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 		ParentID:  parent.ID,
 		RunScript: name,
 	}
-	if err := m.launchNewSession(sess, tool, run.Command, launchOptions{
-		env: settings.Env(portKey(dir)),
+	if err := m.launchNewSession(sess, tool, run.Command, spawn.LaunchOptions{
+		Env: settings.Env(project.PortKey(dir)),
 	}); err != nil {
 		m.errBar.text = err.Error()
 		return m, nil
@@ -210,7 +211,7 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 	// The port is the one thing the reader wanted and could not otherwise
 	// see: the row shows a name, the preview shows output, and neither says
 	// which of the worktrees' ports this one got.
-	port := settings.Port(portKey(dir))
+	port := settings.Port(project.PortKey(dir))
 	message := fmt.Sprintf("running %s on :%d · O opens it", name, port)
 	if replaced > 0 {
 		// Named rather than done quietly: a process the reader started is
@@ -229,33 +230,6 @@ func (m *Model) startRun(settings project.Settings, dir, name string) (tea.Model
 	return m, m.refreshCmd()
 }
 
-// projectSettings reads the settings governing a freshly created worktree.
-//
-// The worktree comes first, so settings are versioned with the branch and a
-// branch that changes its own setup script gets the new one. It is a
-// checkout of a commit, though, and a settings file written but not yet
-// committed is not in it — which is exactly the state a project is in the
-// first time anyone tries this. Falling back to the repository the worktree
-// branched from makes that first attempt work instead of silently doing
-// nothing.
-// Both reads are bounded by the tree they read: a worktree is its own git
-// toplevel, so neither lookup can climb out of the repository into a
-// directory whose settings would be someone else's shell commands.
-func (m *Model) projectSettings(worktreeDir, repoRoot string) (project.Settings, error) {
-	settings, err := project.Load(worktreeDir, worktreeDir)
-	if err != nil {
-		return project.Settings{}, err
-	}
-	if settings.Found || repoRoot == "" {
-		return settings, nil
-	}
-	uncommitted, err := project.Load(repoRoot, repoRoot)
-	if err != nil {
-		return project.Settings{}, err
-	}
-	return uncommitted, nil
-}
-
 // repoRootOf is the repository a directory belongs to, and so how far up
 // settings discovery may walk from it. A directory outside any repository
 // bounds the walk to itself, which is the safe reading: nothing above a
@@ -269,14 +243,6 @@ func (m *Model) repoRootOf(dir string) string {
 		return dir
 	}
 	return root
-}
-
-// portKey is what a directory's port is derived from: the worktree's own
-// directory name, so every session working in that worktree — the agent, the
-// dev server, a second shell — resolves to the same port, and a worktree
-// keeps it across restarts.
-func portKey(dir string) string {
-	return filepath.Base(dir)
 }
 
 func (m *Model) handleRunPickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -325,7 +291,7 @@ func (m *Model) viewRunPick() string {
 		b.WriteString(mutedStyle.Render("  " + firstLine(note)))
 		b.WriteByte('\n')
 	}
-	port := m.runPick.settings.Port(portKey(m.runPick.dir))
+	port := m.runPick.settings.Port(project.PortKey(m.runPick.dir))
 	b.WriteByte('\n')
 	b.WriteString(subtleStyle.Render(fmt.Sprintf("  %s=%d", project.EnvPort, port)))
 	hint := [][2]string{{"↑↓", "move"}, {"↵", "run"}, {"e", "edit"}, {"esc", "back"}}
@@ -383,7 +349,7 @@ func (m *Model) openKey() (tea.Model, tea.Cmd) {
 	}
 	// Serving wins over the pane: a project with both a server and a pane
 	// full of its log is one whose interesting half is in the browser.
-	name := portKey(dir)
+	name := project.PortKey(dir)
 	if port := settings.Port(name); project.Listening(port) {
 		url := settings.URL(name)
 		m.reportDone("opening " + url)
@@ -481,48 +447,6 @@ func resolvePath(path string) string {
 	return path
 }
 
-// autoRunWait caps how long an auto-run script waits on the setup marker. A
-// setup that installs a large dependency tree is slow but finite; one that
-// is never going to finish should not leave a pane spinning for the rest of
-// the session.
-const autoRunWait = 15 * time.Minute
-
-// startAutoRuns launches the scripts a project marked auto, for a worktree
-// that has just been created. Failures are reported and the rest still
-// start: one server refusing to come up is not a reason to withhold the
-// others.
-func (m *Model) startAutoRuns(settings project.Settings, dir, group string) {
-	names := settings.AutoRuns()
-	if len(names) == 0 {
-		return
-	}
-	toolName, tool, ok := m.shellTool()
-	if !ok {
-		m.errBar.text = `no shell configured: add a tool block with shell = true to config.toml`
-		return
-	}
-	marker := ""
-	if strings.TrimSpace(settings.Setup) != "" {
-		marker = project.SetupMarker(dir)
-	}
-	for _, name := range names {
-		command := project.WaitForSetup(marker, settings.Run[name].Command, autoRunWait)
-		sess := store.Session{
-			ID:     newID(),
-			Name:   name + "-" + filepath.Base(dir),
-			Tool:   toolName,
-			Cwd:    dir,
-			Group:  group,
-			Status: status.Starting,
-		}
-		if err := m.launchNewSession(sess, tool, command, launchOptions{
-			env: settings.Env(portKey(dir)),
-		}); err != nil {
-			m.errBar.text = "auto-run " + name + ": " + err.Error()
-		}
-	}
-}
-
 // archiveWorktree runs a project's archive script in a worktree that is
 // about to be removed, for whatever its setup created outside it — a
 // database, a container, a tunnel. Git takes the directory away; nothing
@@ -534,7 +458,7 @@ func (m *Model) startAutoRuns(settings project.Settings, dir, group string) {
 // leaked either way, and refusing to delete the session the reader asked to
 // delete would only add a second problem.
 func (m *Model) archiveWorktree(dir, repoRoot string) {
-	settings, err := m.projectSettings(dir, repoRoot)
+	settings, err := project.LoadWorktree(dir, repoRoot)
 	if err != nil || strings.TrimSpace(settings.Archive) == "" {
 		return
 	}
@@ -542,7 +466,7 @@ func (m *Model) archiveWorktree(dir, repoRoot string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", settings.Archive)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), envPairs(settings.Env(portKey(dir)))...)
+	cmd.Env = append(os.Environ(), envPairs(settings.Env(project.PortKey(dir)))...)
 	out, err := cmd.CombinedOutput()
 	switch {
 	case ctx.Err() != nil:

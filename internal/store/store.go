@@ -46,9 +46,11 @@ type Session struct {
 	// session to leave can clean up the worktree and its am/ branch.
 	WorktreeRepo   string
 	WorktreeBranch string
-	// ParentID is the session a terminal was opened from, so a shell stays
-	// attributable to the worktree it was spawned for even after it is cd'd
-	// somewhere else. Empty for agents and for shells opened on a group.
+	// ParentID is the session this one was opened from: for a shell, so it
+	// stays attributable to the worktree it was spawned for even after it is
+	// cd'd somewhere else; for an agent, whoever asked for it. Empty for a
+	// session a human started and for shells opened on a group. Only the
+	// shells are nested under it in the list.
 	ParentID string
 	// RunScript names the project script this session was started by, empty
 	// for every session a human named. It is what tells one worktree's dev
@@ -79,6 +81,16 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// The single connection serializes this process against itself, but the
+	// database is opened by more than one: the session-scoped commands an
+	// agent runs are their own process writing while the manager's poller
+	// writes. WAL lets them read concurrently and still admits one writer at
+	// a time, and the driver installs no busy handler, so without this a
+	// collision fails immediately instead of waiting the moment out.
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -260,6 +261,73 @@ func (c Config) ToolNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// toolDisplayOrder fixes the order the agent CLIs are offered in, both in
+// the New Session picker and when a session is created without naming one:
+// the first enabled tool is the fallback default, so this is the order the
+// answer is read off, not decoration. Tools outside the list follow,
+// alphabetically.
+var toolDisplayOrder = []string{"claude", "opencode", "codex", "grok", "gemini", "pi"}
+
+// AgentTools is every configured agent CLI in offer order. A block declaring
+// shell = true is not something to spawn an agent with, so it is left out;
+// its own key launches it, and an existing session keeps its tool either way.
+func (c Config) AgentTools() []string {
+	names := make([]string, 0, len(c.Tools))
+	for _, name := range c.ToolNames() {
+		if !c.Tools[name].Shell {
+			names = append(names, name)
+		}
+	}
+	rank := make(map[string]int, len(toolDisplayOrder))
+	for i, name := range toolDisplayOrder {
+		rank[name] = i
+	}
+	sort.Slice(names, func(i, j int) bool {
+		ri, iRanked := rank[names[i]]
+		rj, jRanked := rank[names[j]]
+		if iRanked && jRanked {
+			return ri < rj
+		}
+		if iRanked != jRanked {
+			return iRanked
+		}
+		return names[i] < names[j]
+	})
+	return names
+}
+
+// EnabledAgentTools is AgentTools minus the CLIs the user turned off.
+func (c Config) EnabledAgentTools(hidden map[string]bool) []string {
+	all := c.AgentTools()
+	if len(hidden) == 0 {
+		return all
+	}
+	enabled := make([]string, 0, len(all))
+	for _, name := range all {
+		if !hidden[name] {
+			enabled = append(enabled, name)
+		}
+	}
+	return enabled
+}
+
+// DefaultTool is the CLI a session launches with when nobody named one: the
+// stored choice while it is still enabled, else the first enabled tool. It
+// answers "" only when every tool is hidden or none is configured, which is
+// a refusal to spawn rather than a tool to spawn with.
+func (c Config) DefaultTool(chosen string, hidden map[string]bool) string {
+	names := c.EnabledAgentTools(hidden)
+	if len(names) == 0 {
+		return ""
+	}
+	for _, name := range names {
+		if name == chosen {
+			return chosen
+		}
+	}
+	return names[0]
 }
 
 // ShellTool returns the first shell block by name, making the choice stable

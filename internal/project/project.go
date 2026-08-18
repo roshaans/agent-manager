@@ -136,6 +136,41 @@ func Load(dir, root string) (Settings, error) {
 	}
 }
 
+// LoadWorktree reads the settings governing a freshly created worktree.
+//
+// The worktree comes first, so settings are versioned with the branch and a
+// branch that changes its own setup script gets the new one. It is a checkout
+// of a commit, though, and a settings file written but not yet committed is
+// not in it — which is exactly the state a project is in the first time
+// anyone tries this. Falling back to the repository the worktree branched
+// from makes that first attempt work instead of silently doing nothing.
+//
+// Both reads are bounded by the tree they read: a worktree is its own git
+// toplevel, so neither lookup can climb out of the repository into a
+// directory whose settings would be someone else's shell commands.
+func LoadWorktree(worktreeDir, repoRoot string) (Settings, error) {
+	settings, err := Load(worktreeDir, worktreeDir)
+	if err != nil {
+		return Settings{}, err
+	}
+	if settings.Found || repoRoot == "" {
+		return settings, nil
+	}
+	uncommitted, err := Load(repoRoot, repoRoot)
+	if err != nil {
+		return Settings{}, err
+	}
+	return uncommitted, nil
+}
+
+// PortKey is what a directory's port block is derived from: the worktree's
+// own directory name, so every session working in that worktree — the agent,
+// the dev server, a second shell — resolves to the same port, and a worktree
+// keeps it across restarts.
+func PortKey(dir string) string {
+	return filepath.Base(dir)
+}
+
 // resolve follows symlinks where it can, leaving the path alone when it
 // cannot: a directory that has since been removed is the caller's problem to
 // report, not a reason for discovery to fail here.

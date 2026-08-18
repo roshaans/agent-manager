@@ -330,3 +330,13 @@ func rowFor(t *testing.T, m *Model, id string) treeRow {
 	t.Fatalf("no row for session %s", id)
 	return treeRow{}
 }
+
+// lastSpawned is the session a spawn just added to the list, for the tests
+// that let the spawner pick the name and then have to know what it picked.
+func lastSpawned(t *testing.T, m *Model) store.Session {
+	t.Helper()
+	if len(m.sessions) == 0 {
+		t.Fatal("no session was spawned")
+	}
+	return m.sessions[len(m.sessions)-1]
+}

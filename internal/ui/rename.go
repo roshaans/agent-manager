@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/YoanWai/agent-manager/internal/git"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,7 +81,7 @@ func (m *Model) openRename() {
 		}
 	} else {
 		input.SetValue(entry.sess.Name)
-		tools := sortedToolNames(m.cfg)
+		tools := m.cfg.AgentTools()
 		toolIndex := 0
 		for i, name := range tools {
 			if name == entry.sess.Tool {
@@ -353,7 +354,7 @@ func (m *Model) relabelSession(id string) {
 	if !m.tmux.Exists(id) {
 		return
 	}
-	if err := m.tmux.SetLabel(id, sessionLabel(sess.Group, sess.Name)); err != nil {
+	if err := m.tmux.SetLabel(id, spawn.SessionLabel(sess.Group, sess.Name)); err != nil {
 		m.errBar.text = err.Error()
 	}
 }

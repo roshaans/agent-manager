@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -393,5 +394,50 @@ func TestBackfillFillsResumeFields(t *testing.T) {
 	}
 	if tool.ForkCommand == "" {
 		t.Fatal("claude fork_command was not backfilled")
+	}
+}
+
+func TestAgentToolsOrdersKnownCLIsFirst(t *testing.T) {
+	cfg := Config{Tools: map[string]Tool{
+		"grok":     {Command: "grok"},
+		"gemini":   {Command: "gemini"},
+		"codex":    {Command: "codex"},
+		"claude":   {Command: "claude"},
+		"opencode": {Command: "opencode"},
+		"pi":       {Command: "pi"},
+		"zephyr":   {Command: "zephyr"},
+		"acme":     {Command: "acme"},
+		"terminal": {Shell: true},
+	}}
+	got := cfg.AgentTools()
+	want := []string{"claude", "opencode", "codex", "grok", "gemini", "pi", "acme", "zephyr"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("AgentTools = %v want %v", got, want)
+	}
+}
+
+func TestEnabledAgentToolsAndDefaultTool(t *testing.T) {
+	cfg := Config{Tools: map[string]Tool{
+		"claude":   {Command: "claude"},
+		"codex":    {Command: "codex"},
+		"opencode": {Command: "opencode"},
+	}}
+	hidden := map[string]bool{"claude": true}
+	if got, want := cfg.EnabledAgentTools(hidden), []string{"opencode", "codex"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("EnabledAgentTools = %v want %v", got, want)
+	}
+	if got := cfg.DefaultTool("codex", hidden); got != "codex" {
+		t.Fatalf("stored choice = %q want codex", got)
+	}
+	// A choice the user has since hidden or removed is not a tool to spawn
+	// with, so the first enabled one stands in.
+	if got := cfg.DefaultTool("claude", hidden); got != "opencode" {
+		t.Fatalf("hidden choice = %q want opencode", got)
+	}
+	if got := cfg.DefaultTool("deleted", nil); got != "claude" {
+		t.Fatalf("missing choice = %q want claude", got)
+	}
+	if got := cfg.DefaultTool("claude", map[string]bool{"claude": true, "codex": true, "opencode": true}); got != "" {
+		t.Fatalf("everything hidden = %q want empty", got)
 	}
 }

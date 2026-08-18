@@ -476,8 +476,6 @@ const arrowStepSetting = "arrow_step_keys"
 
 const quickCloseSetting = "quick_prompt_close"
 
-const worktreeSetting = "worktree_default"
-
 // terminalPlacementSetting is where shells sit: "pinned" gathers them in
 // their own block, "inline" nests each under the session it was opened for,
 // or under the oldest agent sharing its directory when it recorded none.
@@ -487,10 +485,6 @@ const terminalPlacementSetting = "terminal_placement"
 const notificationsSetting = "notifications"
 
 const notifyFinishedSetting = "notify_finished"
-
-// hiddenToolsSetting lists CLI tools omitted from new-session pickers
-// (comma-separated names). Empty means every configured tool is shown.
-const hiddenToolsSetting = "hidden_tools"
 
 func (m *Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/project"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -211,7 +212,7 @@ func TestRunScriptReceivesThePortInItsEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if want := settings.Port(portKey(resolved(t, dir))); port != want {
+	if want := settings.Port(project.PortKey(resolved(t, dir))); port != want {
 		t.Fatalf("%s = %d, want %d", project.EnvPort, port, want)
 	}
 }
@@ -237,7 +238,7 @@ func TestWorktreeSpawnRunsTheProjectSetupScript(t *testing.T) {
 	writeProject(t, repo, "setup = \"touch setup-ran\"\n")
 	initGitRepo(t, repo)
 
-	if err := m.spawnSession("claude", "wt-setup", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-setup", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sessions, err := m.store.ListSessions(true)
@@ -266,7 +267,7 @@ func TestNonWorktreeSpawnLeavesSetupAlone(t *testing.T) {
 	writeProject(t, repo, "setup = \"touch setup-ran\"\n")
 	initGitRepo(t, repo)
 
-	if err := m.spawnSession("claude", "plain", repo, "", "", false, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "plain", Directory: repo}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -564,7 +565,7 @@ func TestRunKeyReportsThePortAndHowToOpenIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	port := strconv.Itoa(settings.Port(portKey(resolved(t, dir))))
+	port := strconv.Itoa(settings.Port(project.PortKey(resolved(t, dir))))
 	if !strings.Contains(m.errBar.text, port) {
 		t.Fatalf("message %q should carry the port %s", m.errBar.text, port)
 	}
@@ -606,7 +607,7 @@ func TestOpenKeyOpensTheServerThatIsListening(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	port := settings.Port(portKey(resolved(t, dir)))
+	port := settings.Port(project.PortKey(resolved(t, dir)))
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Skipf("cannot bind %d here: %v", port, err)
@@ -783,7 +784,7 @@ func TestAutoRunStartsAScriptForANewWorktree(t *testing.T) {
 	initGitRepo(t, repo)
 	projectSettingsDir(t, repo, "[run.dev]\ncommand = \"cat\"\nauto = true\n")
 
-	if err := m.spawnSession("claude", "wt-auto", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-auto", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	var started bool
@@ -807,7 +808,7 @@ func TestAutoRunStartsNothingWhenUnmarked(t *testing.T) {
 	initGitRepo(t, repo)
 	projectSettingsDir(t, repo, "[run.dev]\ncommand = \"cat\"\n")
 
-	if err := m.spawnSession("claude", "wt-plain", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-plain", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	for _, sess := range m.sessions {
@@ -866,7 +867,7 @@ func TestArchiveScriptGetsThePortEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if want := strconv.Itoa(settings.Port(portKey(worktree))); string(body) != want {
+	if want := strconv.Itoa(settings.Port(project.PortKey(worktree))); string(body) != want {
 		t.Fatalf("PORT = %q, want %q", body, want)
 	}
 }

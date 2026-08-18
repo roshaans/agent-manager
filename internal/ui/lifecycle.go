@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/config"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
@@ -226,7 +227,7 @@ func (m *Model) reviveSession(sess store.Session) error {
 // the launch has actually taken. A launch that fails leaves the row exactly
 // as it was, still pointing at the conversation it can be revived on.
 func (m *Model) relaunchSession(sess store.Session, tool config.Tool, baseCommand, newStatus string, bindConversation func() error) error {
-	command, env, err := m.buildLaunch(sess.Tool, tool, baseCommand, sess.ID)
+	command, env, err := m.spawner.BuildLaunch(sess.Tool, tool, baseCommand, sess.ID)
 	if err != nil {
 		return err
 	}
@@ -239,7 +240,7 @@ func (m *Model) relaunchSession(sess store.Session, tool config.Tool, baseComman
 			return err
 		}
 	}
-	if err := m.tmux.SetLabel(sess.ID, sessionLabel(sess.Group, sess.Name)); err != nil {
+	if err := m.tmux.SetLabel(sess.ID, spawn.SessionLabel(sess.Group, sess.Name)); err != nil {
 		return err
 	}
 	if err := m.store.UpdateStatus(sess.ID, newStatus); err != nil {

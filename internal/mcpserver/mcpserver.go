@@ -32,6 +32,15 @@ type reviewModeArgs struct {
 	Scope string `json:"scope" jsonschema:"diff scope: uncommitted, branch (vs target), last_commit, or staged"`
 }
 
+type createSessionArgs struct {
+	Prompt    string  `json:"prompt" jsonschema:"first task for the new session; it starts working on this immediately"`
+	Name      string  `json:"name,omitempty" jsonschema:"short kebab-case name; omit to let the new session name itself from its work"`
+	Tool      string  `json:"tool,omitempty" jsonschema:"agent CLI to launch, such as claude or codex; defaults to the manager's configured default"`
+	Group     *string `json:"group,omitempty" jsonschema:"existing group path for the new session; pass an empty string for the root group; defaults to this agent's group"`
+	Directory string  `json:"directory,omitempty" jsonschema:"existing directory to work in; defaults to the selected group's inherited path, then this agent's current directory"`
+	Worktree  *bool   `json:"worktree,omitempty" jsonschema:"give the session its own git worktree and branch so its edits cannot collide with yours; defaults to the target group's setting"`
+}
+
 type listTerminalsArgs struct{}
 
 type createTerminalArgs struct {
@@ -65,19 +74,26 @@ type terminalCommands interface {
 	Read(sessionID, terminalID string) (sessioncmd.TerminalScreen, error)
 }
 
+type sessionCommands interface {
+	Create(sessionID string, opts sessioncmd.CreateSessionOptions) (sessioncmd.Session, error)
+}
+
 const serverInstructions = `Use Agent Manager's terminal tools proactively for task-related shell work that should remain visible, persistent, or run alongside the conversation. Do not wait for the user to ask when these conditions apply.
 
 Before starting a long-running, output-heavy, or continuously monitored command such as a test suite, build, development server, or log tail, call list_terminals. Reuse a relevant running terminal when possible; otherwise call create_terminal in the current group and directory. Use send_terminal to submit the command, then call read_terminal to inspect its screen. Read again as needed while the command is running, and use send_terminal keys for interactive input or interruption.
 
-Do not create a new terminal for every short one-shot command when persistence or separate visibility adds no value. Sending a terminal command executes on the user's machine and follows the same safety and approval expectations as normal shell execution.`
+Do not create a new terminal for every short one-shot command when persistence or separate visibility adds no value. Sending a terminal command executes on the user's machine and follows the same safety and approval expectations as normal shell execution.
+
+Use create_session when work should run beside this conversation as its own agent session, with its own history, worktree and review: a task the user asked to split off, or a piece of work large enough to be followed on its own. The new session begins on the prompt you give it immediately and works on its own, so the prompt has to carry everything it needs to start. Give it a worktree when its edits would otherwise collide with yours.`
 
 // NewServer builds the MCP server with every session tool registered.
 // Split from Run so tests can connect an in-process client.
 func NewServer(configDir, sessionID, version string) *mcp.Server {
-	return newServer(configDir, sessionID, version, sessioncmd.NewTerminals(configDir))
+	return newServer(configDir, sessionID, version,
+		sessioncmd.NewTerminals(configDir), sessioncmd.NewSessions(configDir))
 }
 
-func newServer(configDir, sessionID, version string, terminals terminalCommands) *mcp.Server {
+func newServer(configDir, sessionID, version string, terminals terminalCommands, sessions sessionCommands) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "agent-manager", Version: version},
 		&mcp.ServerOptions{Instructions: serverInstructions},
@@ -131,11 +147,35 @@ func newServer(configDir, sessionID, version string, terminals terminalCommands)
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name: "create_session",
+		Description: "Create a new agent session in Agent Manager, working on the prompt you give it. " +
+			"Use it when work should run beside yours with its own history, worktree and review: a task the user asked " +
+			"to split off, or a piece of work large enough to be followed on its own. " +
+			"The new session starts on the prompt immediately, so give it everything it needs to begin. " +
+			"Opens by default in this agent's group and current directory, launching the manager's default CLI. " +
+			"Set worktree to give it its own git worktree and branch so its edits cannot collide with yours.",
+		Annotations: toolAnnotations(false, false, true),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args createSessionArgs) (*mcp.CallToolResult, sessioncmd.Session, error) {
+		created, err := sessions.Create(sessionID, sessioncmd.CreateSessionOptions{
+			Prompt:    args.Prompt,
+			Name:      args.Name,
+			Tool:      args.Tool,
+			Group:     args.Group,
+			Directory: args.Directory,
+			Worktree:  args.Worktree,
+		})
+		if err != nil {
+			return nil, sessioncmd.Session{}, err
+		}
+		return textContent("created " + formatSession(created)), created, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_terminals",
 		Description: "Call proactively before long-running, output-heavy, persistent, or parallel shell work to find a terminal you can reuse. " +
 			"Lists active managed terminals with ids, names, groups, current directories, statuses, and whether their tmux panes are running. " +
 			"Reuse a relevant running terminal when possible; otherwise call create_terminal. Use the returned id with send_terminal and read_terminal.",
-		Annotations: terminalToolAnnotations(true, false, false),
+		Annotations: toolAnnotations(true, false, false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args listTerminalsArgs) (*mcp.CallToolResult, listTerminalsOutput, error) {
 		listed, err := terminals.List(sessionID)
 		if err != nil {
@@ -150,7 +190,7 @@ func newServer(configDir, sessionID, version string, terminals terminalCommands)
 		Description: "After list_terminals finds no relevant running terminal, call this without waiting for the user to create one for long-running, output-heavy, persistent, or parallel shell work. " +
 			"Returns its id and opens by default in this agent's group and current directory. Set group to use another existing group and its inherited directory, or set directory explicitly. " +
 			"Then call send_terminal with the returned id.",
-		Annotations: terminalToolAnnotations(false, false, false),
+		Annotations: toolAnnotations(false, false, false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args createTerminalArgs) (*mcp.CallToolResult, sessioncmd.Terminal, error) {
 		created, err := terminals.Create(sessionID, sessioncmd.CreateTerminalOptions{
 			Group:     args.Group,
@@ -167,7 +207,7 @@ func newServer(configDir, sessionID, version string, terminals terminalCommands)
 		Description: "Call after list_terminals or create_terminal to run or control work in a managed terminal, keeping it visible and separate from the conversation. Provide exactly one of command or keys. " +
 			"A command is pasted and submitted with Enter, so it executes on the user's machine. " +
 			"Keys sends exact tmux key names for interactive control, such as [\"C-c\"] or [\"Up\", \"Enter\"]. Call read_terminal after sending to inspect the result.",
-		Annotations: terminalToolAnnotations(false, true, true),
+		Annotations: toolAnnotations(false, true, true),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args sendTerminalArgs) (*mcp.CallToolResult, sendTerminalOutput, error) {
 		if err := terminals.Send(sessionID, args.TerminalID, args.Command, args.Keys); err != nil {
 			return nil, sendTerminalOutput{}, err
@@ -184,7 +224,7 @@ func newServer(configDir, sessionID, version string, terminals terminalCommands)
 		Name: "read_terminal",
 		Description: "Call immediately after send_terminal to inspect the result, and call again as needed to monitor ongoing work. " +
 			"Returns the plain-text content currently visible in the managed terminal pane. This is the current screen, not the pane's full scrollback history.",
-		Annotations: terminalToolAnnotations(true, false, false),
+		Annotations: toolAnnotations(true, false, false),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args readTerminalArgs) (*mcp.CallToolResult, sessioncmd.TerminalScreen, error) {
 		screen, err := terminals.Read(sessionID, args.TerminalID)
 		if err != nil {
@@ -200,13 +240,35 @@ func newServer(configDir, sessionID, version string, terminals terminalCommands)
 	return server
 }
 
-func terminalToolAnnotations(readOnly, destructive, openWorld bool) *mcp.ToolAnnotations {
+// toolAnnotations describes what a call costs the user: openWorld marks a
+// tool whose effect leaves this machine's state — a command run in a shell, an
+// agent set loose on the work — as opposed to one that only writes to the
+// manager.
+func toolAnnotations(readOnly, destructive, openWorld bool) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    readOnly,
 		DestructiveHint: &destructive,
 		IdempotentHint:  readOnly,
 		OpenWorldHint:   &openWorld,
 	}
+}
+
+func formatSession(session sessioncmd.Session) string {
+	group := session.Group
+	if group == "" {
+		group = "root"
+	}
+	line := fmt.Sprintf("%s session %s (%s) in %s at %s",
+		session.Tool, session.Name, session.ID, group, session.Directory)
+	if session.Branch != "" {
+		line += " on branch " + session.Branch
+	}
+	if len(session.Warnings) > 0 {
+		// The session is running; these are what it survived, and a caller
+		// told nothing would read the silence as everything having worked.
+		line += "\n" + strings.Join(session.Warnings, "\n")
+	}
+	return line
 }
 
 func formatTerminal(terminal sessioncmd.Terminal) string {

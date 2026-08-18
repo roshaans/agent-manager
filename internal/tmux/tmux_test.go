@@ -786,3 +786,64 @@ func sessionOption(t *testing.T, name, option string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// A second process talking to the same server — the session-scoped commands
+// an agent runs — never computed the theme, so it reads back what the
+// manager already put there and its own sessions open the same way.
+func TestAdoptServerPaneThemePicksUpBothHalves(t *testing.T) {
+	manager := requireTmux(t)
+	t.Cleanup(func() { clearPaneTheme(t) })
+	manager.PublishPaneTheme(PaneTheme{Background: "#1e1e2e", ColorFgBg: "15;0"})
+
+	id := "adopt" + strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "")
+	if err := manager.Create(id, "/tmp", "", nil, 0, 0); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { manager.Kill(id) })
+
+	other := requireTmux(t)
+	other.AdoptServerPaneTheme()
+
+	adoptedID := "adopted" + strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "")
+	marker := t.TempDir() + "/env"
+	if err := other.Create(adoptedID, "/tmp", "printenv COLORFGBG > "+marker, nil, 0, 0); err != nil {
+		t.Fatalf("Create adopted: %v", err)
+	}
+	t.Cleanup(func() { other.Kill(adoptedID) })
+
+	if got := strings.TrimSpace(waitForFile(t, other, adoptedID, marker)); got != "15;0" {
+		t.Fatalf("COLORFGBG in adopted pane = %q, want %q", got, "15;0")
+	}
+	if got, want := globalWindowStyle(t), "bg=#1e1e2e"; got != want {
+		t.Fatalf("window-style = %q, want %q", got, want)
+	}
+}
+
+// Half a theme is worse than none: publishing a background with no COLORFGBG
+// would have the next Create write `window-style bg=` and clear what the
+// manager set, so an incomplete server leaves the driver unpublished.
+func TestAdoptServerPaneThemeIgnoresAHalfSetServer(t *testing.T) {
+	driver := requireTmux(t)
+	t.Cleanup(func() { clearPaneTheme(t) })
+
+	id := "half" + strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "")
+	if err := driver.Create(id, "/tmp", "", nil, 0, 0); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { driver.Kill(id) })
+
+	if out, err := tmuxCmd("set-option", "-g", "window-style", "bg=#1e1e2e").CombinedOutput(); err != nil {
+		t.Fatalf("set window-style: %v: %s", err, out)
+	}
+	driver.AdoptServerPaneTheme()
+	if theme := driver.paneTheme.Load(); theme != nil {
+		t.Fatalf("published %+v from a server with no COLORFGBG", *theme)
+	}
+
+	// Neither half set is the ordinary case for a server nobody themed.
+	clearPaneTheme(t)
+	driver.AdoptServerPaneTheme()
+	if theme := driver.paneTheme.Load(); theme != nil {
+		t.Fatalf("published %+v from an unthemed server", *theme)
+	}
+}

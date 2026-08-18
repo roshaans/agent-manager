@@ -10,6 +10,7 @@ import (
 
 	"github.com/YoanWai/agent-manager/internal/config"
 	"github.com/YoanWai/agent-manager/internal/hooks"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/tmux"
@@ -154,7 +155,7 @@ func TestForkCopiesManagedWorktreeReference(t *testing.T) {
 func TestForkLaunchFailureKeepsSharedWorktree(t *testing.T) {
 	m := buildModel(t)
 	repo := seedRepo(t)
-	if err := m.spawnSession("claude", "source", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "source", Directory: repo, Worktree: true}); err != nil {
 		t.Fatal(err)
 	}
 	sessions, err := m.store.ListSessions(true)
@@ -166,12 +167,14 @@ func TestForkLaunchFailureKeepsSharedWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(badConfig, "hooks"), []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m.hooks = hooks.NewManager(badConfig)
+	// Break what the launch actually uses: a hooks directory it cannot write
+	// into is the failure this test is about.
+	m.spawner = spawn.New(m.cfg, m.store, m.tmux, hooks.NewManager(badConfig), m.gitDrv, nil)
 
 	forked := source
 	forked.ID = "failed-fork"
 	forked.Name = "forked"
-	if err := m.launchNewSession(forked, m.cfg.Tools[forked.Tool], "cat", launchOptions{}); err == nil {
+	if err := m.launchNewSession(forked, m.cfg.Tools[forked.Tool], "cat", spawn.LaunchOptions{}); err == nil {
 		t.Fatal("launch failure was not reported")
 	}
 	if _, err := os.Stat(source.Cwd); err != nil {

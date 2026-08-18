@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/config"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/tmux"
@@ -1160,7 +1161,7 @@ func TestDeleteRemovesCleanWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	initGitRepo(t, repo)
-	if err := m.spawnSession("claude", "wt-clean", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-clean", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sessions, _ := m.store.ListSessions(true)
@@ -1176,7 +1177,7 @@ func TestDeleteRemovesCleanWorktree(t *testing.T) {
 func TestDeleteKeepsWorktreeUntilLastSharingSession(t *testing.T) {
 	m := buildModel(t)
 	repo := seedRepo(t)
-	if err := m.spawnSession("claude", "owner", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "owner", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sessions, err := m.store.ListSessions(true)
@@ -1223,7 +1224,7 @@ func TestDeleteKeepsDirtyWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	initGitRepo(t, repo)
-	if err := m.spawnSession("claude", "wt-dirty", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-dirty", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sessions, _ := m.store.ListSessions(true)
@@ -1346,7 +1347,7 @@ func TestDeleteTakesTheTerminalsOpenedForASession(t *testing.T) {
 func TestDeleteFreesAWorktreeItsTerminalWasHolding(t *testing.T) {
 	m := buildModel(t)
 	repo := seedRepo(t)
-	if err := m.spawnSession("claude", "wt-owner", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-owner", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())

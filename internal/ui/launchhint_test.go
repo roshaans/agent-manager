@@ -10,6 +10,7 @@ import (
 
 	"github.com/YoanWai/agent-manager/internal/config"
 	"github.com/YoanWai/agent-manager/internal/mcpreg"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
@@ -77,7 +78,7 @@ func TestRestartHermesWithoutMCPSupportPromptsInstall(t *testing.T) {
 	m := buildModel(t)
 	m.cfg.Tools["hermes"] = config.Tool{Command: "cat", DefaultStatus: status.Idle}
 	installSDKlessHermes(t)
-	sess := store.Session{ID: newID(), Name: "agent", Tool: "hermes", Cwd: t.TempDir()}
+	sess := store.Session{ID: spawn.NewID(), Name: "agent", Tool: "hermes", Cwd: t.TempDir()}
 	m.confirm = confirmTarget{action: actionRestart, sessions: []store.Session{sess}}
 	m.mode = modeConfirmDelete
 

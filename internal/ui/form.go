@@ -1,24 +1,16 @@
 package ui
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
-	"github.com/YoanWai/agent-manager/internal/config"
-	"github.com/YoanWai/agent-manager/internal/hooks"
-	"github.com/YoanWai/agent-manager/internal/mcpreg"
 	"github.com/YoanWai/agent-manager/internal/project"
-	"github.com/YoanWai/agent-manager/internal/status"
-	"github.com/YoanWai/agent-manager/internal/store"
-	"github.com/YoanWai/agent-manager/internal/tmux"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
 )
 
 const (
@@ -109,14 +101,6 @@ type groupForm struct {
 	// ones, so retargeting the path at a project without settings clears the
 	// previous project's answers instead of offering them as this one's.
 	settingsFilled bool
-}
-
-// sessionLabel renders a session's identity for the tmux status bar.
-func sessionLabel(group, name string) string {
-	if group == "" {
-		return name
-	}
-	return group + " · " + name
 }
 
 // resolveExistingDir turns raw field input into a usable directory:
@@ -233,55 +217,10 @@ func (m *Model) groupDefaultDir(group string) string {
 	return cwd
 }
 
-// toolDisplayOrder fixes the order tools appear in when creating a session and
-// when cycling the quick-spawn tool. Tools outside this list follow, sorted
-// alphabetically.
-var toolDisplayOrder = []string{"claude", "opencode", "codex", "grok", "gemini", "pi"}
-
-// sortedToolNames is every configured agent CLI in picker order. A block
-// declaring shell = true is not a CLI to spawn agents with, so it is left
-// out; its own key launches it, and a rename still keeps a shell session
-// on it.
-func sortedToolNames(cfg config.Config) []string {
-	names := make([]string, 0, len(cfg.Tools))
-	for _, name := range cfg.ToolNames() {
-		if !cfg.Tools[name].Shell {
-			names = append(names, name)
-		}
-	}
-	rank := make(map[string]int, len(toolDisplayOrder))
-	for i, name := range toolDisplayOrder {
-		rank[name] = i
-	}
-	sort.Slice(names, func(i, j int) bool {
-		ri, iRanked := rank[names[i]]
-		rj, jRanked := rank[names[j]]
-		if iRanked && jRanked {
-			return ri < rj
-		}
-		if iRanked != jRanked {
-			return iRanked
-		}
-		return names[i] < names[j]
-	})
-	return names
-}
-
 // enabledToolNames is the create-session picker: configured tools minus any
 // the user hid in settings. Existing sessions keep their tool even when hidden.
 func (m *Model) enabledToolNames() []string {
-	all := sortedToolNames(m.cfg)
-	hidden := m.hiddenTools()
-	if len(hidden) == 0 {
-		return all
-	}
-	out := make([]string, 0, len(all))
-	for _, name := range all {
-		if !hidden[name] {
-			out = append(out, name)
-		}
-	}
-	return out
+	return m.cfg.EnabledAgentTools(m.hiddenTools())
 }
 
 func (m *Model) openForm() {
@@ -534,27 +473,23 @@ func (m *Model) submitForm() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	name := strings.TrimSpace(m.form.name.Value())
-	autoNamed := name == ""
-	if autoNamed {
-		name = toolName + "-" + newID()[:4]
-	}
 	cwd, _ := os.Getwd()
 	dir, ok := resolveExistingDir(m.form.dir.Value(), cwd)
 	if !ok {
 		m.errBar.text = "working directory does not exist: " + dir
 		return m, nil
 	}
-	group := m.selectedGroupPath()
-	// Chips become the paths of the images they stand for, so a first task
-	// reaches the agent with its screenshot named where it was pasted.
-	prompt := m.form.prompt.message()
-	if strings.HasPrefix(prompt, "-") {
-		m.errBar.text = `prompt cannot start with "-": the tool would read it as a flag`
-		return m, nil
-	}
 
-	if err := m.spawnSession(toolName, name, dir, group, prompt, autoNamed, m.formWorktreeOn()); err != nil {
+	if err := m.spawnSession(spawn.Options{
+		Tool:      toolName,
+		Name:      strings.TrimSpace(m.form.name.Value()),
+		Group:     m.selectedGroupPath(),
+		Directory: dir,
+		// Chips become the paths of the images they stand for, so a first task
+		// reaches the agent with its screenshot named where it was pasted.
+		Prompt:   m.form.prompt.message(),
+		Worktree: m.formWorktreeOn(),
+	}); err != nil {
 		m.reportLaunchError(err)
 		// A spawn the hint dialog refused takes the form off screen with it,
 		// so its images go the way esc sends them. An error reported in the
@@ -569,196 +504,6 @@ func (m *Model) submitForm() (tea.Model, tea.Cmd) {
 	m.statusFilter = statusFilterAll
 	m.mode = modeList
 	return m, m.refreshCmd()
-}
-
-// renameDirective asks the agent, as the first line of its first prompt,
-// to name its own session via the rename subcommand. Injected only for
-// auto-named sessions that launch with a prompt, so it fires exactly once.
-const renameDirective = `First, run this exact shell command once, replacing <name> with a short 2-4 word kebab-case name for the broad feature or theme of this whole session (not one subtask of a larger feature): agent-manager rename "<name>". Run rename only this once. Do not rename again later in the conversation unless the user explicitly asks you to rename; if they do, pick a broad name from context, not a narrow step. Then do the task:`
-
-// deferredRenameDirective is the standalone message sent into sessions
-// whose first prompt could not carry the directive: slash-command
-// prompts (the command must open the message) and promptless launches.
-const deferredRenameDirective = `Run this exact shell command once, replacing <name> with a short 2-4 word kebab-case name for the broad feature or theme of this whole session (not one subtask of a larger feature): agent-manager rename "<name>". Run rename only this once. Do not rename again later in the conversation unless the user explicitly asks you to rename; if they do, pick a broad name from context, not a narrow step. Then continue.`
-
-// renameAvailableNote tells a custom-named session that rename exists for
-// later use without asking it to rename now.
-const renameAvailableNote = `This session is already named. You can rename it later with agent-manager rename "<name>" only if the user asks. Do not rename it now. Then do the task:`
-
-// directiveEmbeddable reports whether a launch note can ride the
-// session's first prompt; otherwise auto-named sessions get the rename
-// directive later as its own message.
-func directiveEmbeddable(prompt string) bool {
-	return prompt != "" && !strings.HasPrefix(prompt, "/")
-}
-
-// launchPrompt prepends a short agent note when the first prompt can
-// carry one: auto-named sessions must rename once; custom-named sessions
-// only learn that rename is available later.
-func launchPrompt(prompt string, autoNamed bool) string {
-	if !directiveEmbeddable(prompt) {
-		return prompt
-	}
-	if autoNamed {
-		return renameDirective + "\n\n" + prompt
-	}
-	return renameAvailableNote + "\n\n" + prompt
-}
-
-// spawnSession creates the tmux session and its store record for both
-// the New Session form and quick spawn. autoNamed marks sessions whose
-// name is a generated placeholder; those are asked to rename once.
-// Custom-named sessions only get a short note that rename is available later.
-// discardWorktree rolls back a worktree created for a spawn that failed
-// partway; a fresh worktree is clean by construction, so the removal fires.
-func (m *Model) discardWorktree(repo, path, branch string) {
-	if repo == "" {
-		return
-	}
-	_, _ = m.gitDrv.RemoveWorktreeIfClean(repo, path, branch)
-}
-
-func (m *Model) spawnSession(toolName, name, dir, group, prompt string, autoNamed, worktree bool) error {
-	tool := m.cfg.Tools[toolName]
-	id := newID()
-	worktreeRepo, worktreeBranch := "", ""
-	if worktree {
-		if m.gitDrv == nil {
-			return errors.New("worktree sessions need git installed")
-		}
-		root, err := m.gitDrv.RepoRoot(dir)
-		if err != nil {
-			return err
-		}
-		path, branch, err := m.gitDrv.AddWorktree(root, name)
-		if err != nil {
-			return err
-		}
-		dir = path
-		worktreeRepo, worktreeBranch = root, branch
-	}
-	deferDirective := autoNamed && !directiveEmbeddable(prompt)
-	prompt = launchPrompt(prompt, autoNamed)
-	base := withPrompt(tool, tool.Command, prompt)
-	// A worktree is a fresh checkout: whatever the project needs that git does
-	// not track — installed dependencies, an .env, generated files — is not
-	// there yet, and an agent started into that tree spends its first turn on
-	// errors that are not the code's. The setup script runs in the pane ahead
-	// of the agent so its output is visible and a failure holds the pane.
-	launchEnv, setup, marker := map[string]string(nil), "", ""
-	var autoRuns project.Settings
-	if worktree {
-		settings, err := m.projectSettings(dir, worktreeRepo)
-		if err != nil {
-			m.discardWorktree(worktreeRepo, dir, worktreeBranch)
-			return err
-		}
-		setup = settings.Setup
-		if setup != "" {
-			marker = project.SetupMarker(dir)
-		}
-		autoRuns = settings
-		launchEnv = settings.Env(filepath.Base(dir))
-	}
-	var pendingInputs []string
-	if tool.PromptMode == "send" {
-		if prompt != "" {
-			pendingInputs = append(pendingInputs, prompt)
-		}
-	}
-	if deferDirective {
-		pendingInputs = append(pendingInputs, deferredRenameDirective)
-	}
-	// Tools that accept a chosen session id launch with one, so a later
-	// revive resumes this exact conversation rather than the directory's
-	// most recent one. Tools without the flag mint their own id, captured
-	// after launch by the poller.
-	agentSessionID := ""
-	if tool.SessionIDFlag != "" {
-		agentSessionID = uuid.NewString()
-		base += " " + tool.SessionIDFlag + " " + agentSessionID
-	}
-	if err := m.launchNewSession(store.Session{
-		ID:    id,
-		Name:  name,
-		Tool:  toolName,
-		Cwd:   dir,
-		Group: group,
-		// Starting until the agent first draws to its pane, so the row shows
-		// a launch state immediately; the poller flips it to the real status.
-		Status:         status.Starting,
-		AgentSessionID: agentSessionID,
-		WorktreeRepo:   worktreeRepo,
-		WorktreeBranch: worktreeBranch,
-		PendingInputs:  pendingInputs,
-	}, tool, base, launchOptions{
-		rollbackWorktree: worktreeRepo != "",
-		env:              launchEnv,
-		setup:            setup,
-		setupMarker:      marker,
-	}); err != nil {
-		return err
-	}
-	// Auto-run scripts start after the session exists, so a failure to spawn
-	// the agent is not compounded by servers left running for a worktree
-	// that never got one. Each waits on the setup marker in its own pane.
-	m.startAutoRuns(autoRuns, dir, group)
-	// The directive went out with the launch, so the row waits for the name
-	// the agent picks instead of showing the one generated for it.
-	if autoNamed {
-		if m.awaitedRenames == nil {
-			m.awaitedRenames = map[string]string{}
-		}
-		m.awaitedRenames[id] = name
-	}
-	return nil
-}
-
-func withPrompt(tool config.Tool, command, prompt string) string {
-	if prompt == "" || tool.PromptMode == "send" {
-		return command
-	}
-	if tool.PromptFlag != "" {
-		return command + " " + tool.PromptFlag + " " + tmux.ShellQuote(prompt)
-	}
-	return command + " " + tmux.ShellQuote(prompt)
-}
-
-// buildLaunch resolves the shell command and environment a session
-// launches with. Every session carries its id so the rename subcommand
-// can find it; tools backed by hooks additionally get the generated
-// settings file and their status-file path, plus a clean slate from any
-// earlier files under the same id.
-func (m *Model) buildLaunch(toolName string, tool config.Tool, baseCommand, id string) (string, map[string]string, error) {
-	if err := m.hooks.RemoveName(id); err != nil {
-		return "", nil, err
-	}
-	env := map[string]string{hooks.EnvSessionID: id}
-	command, err := mcpreg.Apply(mcpreg.Style(toolName, tool.MCP), mcpExecutable(), m.hooks.Dir(), baseCommand, env)
-	if err != nil {
-		return "", nil, err
-	}
-	if tool.StatusSource != hooks.StatusSourceClaude {
-		return command, env, nil
-	}
-	settingsPath, err := m.hooks.EnsureSettings()
-	if err != nil {
-		return "", nil, err
-	}
-	if err := m.hooks.Remove(id); err != nil {
-		return "", nil, err
-	}
-	env[hooks.EnvStatusFile] = m.hooks.StatusFile(id)
-	return command + " --settings " + tmux.ShellQuote(settingsPath), env, nil
-}
-
-// mcpExecutable names the binary generated MCP configs point at: the
-// running manager itself, falling back to the PATH-resolved name.
-func mcpExecutable() string {
-	if exe, err := os.Executable(); err == nil {
-		return exe
-	}
-	return "agent-manager"
 }
 
 func (m *Model) openGroupForm() {

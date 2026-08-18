@@ -96,6 +96,57 @@ func (d *Driver) PushPaneTheme() error {
 	return nil
 }
 
+// AdoptServerPaneTheme publishes the pane theme the running manager already
+// set on this server, for a driver that did not compute it.
+//
+// The theme travels two ways. window-style is a server-global option, so a
+// session created by another process already opens on it; COLORFGBG is
+// exported into the launch script from the driver's own published value, so
+// a process that never published one hands its agent nothing. Reading both
+// back off the server closes that gap without teaching this package how the
+// theme is chosen.
+//
+// Both halves or neither: publishing a half theme would have the next Create
+// write `window-style bg=` and clear what the manager set. A server with no
+// theme on it, or none running at all, is left alone rather than reported —
+// there is nothing to adopt, which is not a failure.
+func (d *Driver) AdoptServerPaneTheme() {
+	background, ok := d.globalOption("window-style")
+	if !ok || !strings.HasPrefix(background, "bg=") {
+		return
+	}
+	colorFgBg, ok := d.globalEnv("COLORFGBG")
+	if !ok {
+		return
+	}
+	d.PublishPaneTheme(PaneTheme{
+		Background: strings.TrimPrefix(background, "bg="),
+		ColorFgBg:  colorFgBg,
+	})
+}
+
+func (d *Driver) globalOption(name string) (string, bool) {
+	out, err := exec.Command(d.bin, d.args("show-options", "-gv", name)...).Output()
+	if err != nil {
+		return "", false
+	}
+	value := strings.TrimSpace(string(out))
+	// An option nobody set reads as "default", which is tmux saying there is
+	// no value rather than naming one.
+	return value, value != "" && value != "default"
+}
+
+func (d *Driver) globalEnv(name string) (string, bool) {
+	out, err := exec.Command(d.bin, d.args("show-environment", "-g", name)...).Output()
+	if err != nil {
+		return "", false
+	}
+	// A variable that is set prints "NAME=value"; one that is unset prints
+	// "-NAME", which carries no value to adopt.
+	value, ok := strings.CutPrefix(strings.TrimSpace(string(out)), name+"=")
+	return value, ok && value != ""
+}
+
 func New() (*Driver, error) {
 	return NewWithSocket(defaultSocket)
 }

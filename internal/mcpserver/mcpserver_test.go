@@ -47,6 +47,17 @@ func (f *fakeTerminalCommands) Read(_ string, id string) (sessioncmd.TerminalScr
 	return f.screen, f.err
 }
 
+type fakeSessionCommands struct {
+	created     sessioncmd.Session
+	createdOpts sessioncmd.CreateSessionOptions
+	err         error
+}
+
+func (f *fakeSessionCommands) Create(_ string, opts sessioncmd.CreateSessionOptions) (sessioncmd.Session, error) {
+	f.createdOpts = opts
+	return f.created, f.err
+}
+
 func connect(t *testing.T, configDir, sessionID string) *mcp.ClientSession {
 	t.Helper()
 	return connectServer(t, NewServer(configDir, sessionID, "test"))
@@ -117,7 +128,7 @@ func TestListsAllTools(t *testing.T) {
 		names[tool.Name] = true
 	}
 	for _, want := range []string{
-		"rename", "review_repo", "review_base", "review_mode",
+		"rename", "review_repo", "review_base", "review_mode", "create_session",
 		"list_terminals", "create_terminal", "send_terminal", "read_terminal",
 	} {
 		if !names[want] {
@@ -184,7 +195,7 @@ func TestTerminalToolsExposeStructuredResultsAndForwardArguments(t *testing.T) {
 			Output:   "build complete",
 		},
 	}
-	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", fake))
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", fake, &fakeSessionCommands{}))
 
 	listed := callTool(t, session, "list_terminals", map[string]any{})
 	if listed.IsError || listed.StructuredContent == nil {
@@ -256,7 +267,7 @@ func TestTerminalToolAnnotationsDescribeLocalRisk(t *testing.T) {
 
 func TestTerminalToolErrorsAreToolErrors(t *testing.T) {
 	fake := &fakeTerminalCommands{err: errors.New("terminal is not running")}
-	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", fake))
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", fake, &fakeSessionCommands{}))
 	for _, call := range []struct {
 		name string
 		args map[string]any
@@ -370,4 +381,129 @@ func TestReviewModeWritesMailbox(t *testing.T) {
 			t.Fatalf("mailbox scope = %q, want %q", got, scope)
 		}
 	}
+}
+
+// A created session works on its own from the prompt it is handed, which is
+// the part an agent has to know before it writes one: both the server
+// instructions and the tool's own description have to say so, since clients
+// expose one, the other, or both.
+func TestCreateSessionTeachesWhatTheNewSessionNeeds(t *testing.T) {
+	session := connect(t, t.TempDir(), "abc123")
+	instructions := session.InitializeResult().Instructions
+	listed, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := ""
+	for _, tool := range listed.Tools {
+		if tool.Name == "create_session" {
+			description = tool.Description
+		}
+	}
+	if description == "" {
+		t.Fatal("create_session is not registered")
+	}
+	for _, want := range []string{"its own history", "immediately", "worktree"} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("server instructions do not teach %q:\n%s", want, instructions)
+		}
+		if !strings.Contains(description, want) {
+			t.Errorf("create_session description does not teach %q:\n%s", want, description)
+		}
+	}
+	if !strings.Contains(instructions, "create_session") {
+		t.Errorf("server instructions never name the tool:\n%s", instructions)
+	}
+}
+
+func TestCreateSessionForwardsArgumentsAndReportsTheSession(t *testing.T) {
+	group := "backend"
+	worktree := true
+	fake := &fakeSessionCommands{created: sessioncmd.Session{
+		ID: "a1b2c3d4", Name: "fix-auth-bug", Tool: "claude", Group: group,
+		Directory: "/work/repo-worktrees/fix-auth", Status: "starting", Branch: "am/fix-auth",
+	}}
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", &fakeTerminalCommands{}, fake))
+
+	created := callTool(t, session, "create_session", map[string]any{
+		"prompt": "fix the auth bug", "name": "fix-auth-bug", "tool": "claude",
+		"group": group, "directory": "/work", "worktree": worktree,
+	})
+	if created.IsError || created.StructuredContent == nil {
+		t.Fatalf("create_session = %+v", created)
+	}
+	opts := fake.createdOpts
+	if opts.Prompt != "fix the auth bug" || opts.Name != "fix-auth-bug" || opts.Tool != "claude" ||
+		opts.Directory != "/work" || opts.Group == nil || *opts.Group != group ||
+		opts.Worktree == nil || !*opts.Worktree {
+		t.Fatalf("create args = %+v", opts)
+	}
+
+	text, _ := callText(t, session, "create_session", map[string]any{"prompt": "fix the auth bug"})
+	for _, want := range []string{"fix-auth-bug", "a1b2c3d4", "am/fix-auth"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("create text %q is missing %q", text, want)
+		}
+	}
+	// Omitted optionals stay omitted, so the layer below applies the caller's
+	// own group and the manager's default CLI rather than a blank.
+	if fake.createdOpts.Group != nil || fake.createdOpts.Worktree != nil || fake.createdOpts.Tool != "" {
+		t.Fatalf("omitted options were filled in: %+v", fake.createdOpts)
+	}
+}
+
+// The session is running; a warning says what it survived, and a caller told
+// nothing would read the silence as everything having worked.
+func TestCreateSessionSurfacesWarningsBesideTheSession(t *testing.T) {
+	fake := &fakeSessionCommands{created: sessioncmd.Session{
+		ID: "a1b2c3d4", Name: "fix-auth", Tool: "claude", Status: "starting",
+		Warnings: []string{"auto-run dev: no shell configured"},
+	}}
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", &fakeTerminalCommands{}, fake))
+	text, isError := callText(t, session, "create_session", map[string]any{"prompt": "do it"})
+	if isError {
+		t.Fatalf("a warning must not read as a failure: %q", text)
+	}
+	if !strings.Contains(text, "auto-run dev") {
+		t.Fatalf("warning not reported: %q", text)
+	}
+}
+
+func TestCreateSessionErrorsAreToolErrors(t *testing.T) {
+	fake := &fakeSessionCommands{err: errors.New("group \"nope\" does not exist")}
+	session := connectServer(t, newServer(t.TempDir(), "abc123", "test", &fakeTerminalCommands{}, fake))
+	text, isError := callText(t, session, "create_session", map[string]any{"prompt": "do it", "group": "nope"})
+	if !isError || !strings.Contains(text, "does not exist") {
+		t.Fatalf("create_session = %q, isError=%v", text, isError)
+	}
+}
+
+// Creating a session is not destructive, but the agent it starts acts on the
+// user's machine and beyond it, which is what openWorld says.
+func TestCreateSessionAnnotationsDescribeAnAgentSetLoose(t *testing.T) {
+	session := connect(t, t.TempDir(), "abc123")
+	listed, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name != "create_session" {
+			continue
+		}
+		annotations := tool.Annotations
+		if annotations == nil || annotations.ReadOnlyHint || annotations.IdempotentHint {
+			t.Fatalf("create_session annotations = %+v", annotations)
+		}
+		if annotations.DestructiveHint == nil || *annotations.DestructiveHint {
+			t.Fatalf("creating a session destroys nothing: %+v", annotations)
+		}
+		if annotations.OpenWorldHint == nil || !*annotations.OpenWorldHint {
+			t.Fatalf("a new agent reaches past the manager: %+v", annotations)
+		}
+		if tool.OutputSchema == nil {
+			t.Fatal("create_session has no structured output schema")
+		}
+		return
+	}
+	t.Fatal("create_session is not registered")
 }

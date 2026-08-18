@@ -1,8 +1,7 @@
 package ui
 
 import (
-	"strings"
-
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -139,10 +138,6 @@ func (m *Model) submitQuick() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) quickSpawn(group, prompt string) (tea.Model, tea.Cmd) {
-	if strings.HasPrefix(prompt, "-") {
-		m.errBar.text = `prompt cannot start with "-": the tool would read it as a flag`
-		return m, nil
-	}
 	toolName := m.quickTool()
 	if toolName == "" {
 		m.errBar.text = "no tools configured"
@@ -153,8 +148,15 @@ func (m *Model) quickSpawn(group, prompt string) (tea.Model, tea.Cmd) {
 		m.errBar.text = "group has no valid default path: " + dir
 		return m, nil
 	}
-	name := toolName + "-" + newID()[:4]
-	if err := m.spawnSession(toolName, name, dir, group, prompt, true, m.quickWorktreeOn()); err != nil {
+	// No name: a session spawned from one line of prompt has nothing to be
+	// called yet, so it is asked to name itself once it knows.
+	if err := m.spawnSession(spawn.Options{
+		Tool:      toolName,
+		Group:     group,
+		Directory: dir,
+		Prompt:    prompt,
+		Worktree:  m.quickWorktreeOn(),
+	}); err != nil {
 		m.reportLaunchError(err)
 		// A spawn the hint dialog refused leaves nothing to send, so the
 		// bar closes instead of swallowing the list keys behind the dialog.

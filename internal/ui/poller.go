@@ -13,6 +13,7 @@ import (
 	"github.com/YoanWai/agent-manager/internal/git"
 	"github.com/YoanWai/agent-manager/internal/hooks"
 	"github.com/YoanWai/agent-manager/internal/notify"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/sysstat"
@@ -543,7 +544,7 @@ func (p *poller) applyPendingRename(sess *store.Session) error {
 			return err
 		}
 		sess.Name = name
-		_ = p.tmux.SetLabel(sess.ID, sessionLabel(sess.Group, name))
+		_ = p.tmux.SetLabel(sess.ID, spawn.SessionLabel(sess.Group, name))
 	}
 	return p.hooks.RemoveName(sess.ID)
 }

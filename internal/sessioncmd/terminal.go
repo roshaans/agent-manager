@@ -4,16 +4,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/YoanWai/agent-manager/internal/config"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/tmux"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/google/uuid"
 )
 
 type Terminal struct {
@@ -38,8 +35,7 @@ type CreateTerminalOptions struct {
 }
 
 type Terminals struct {
-	configDir string
-	newDriver func() (*tmux.Driver, error)
+	commands
 }
 
 func NewTerminals(configDir string) *Terminals {
@@ -47,43 +43,10 @@ func NewTerminals(configDir string) *Terminals {
 }
 
 func newTerminals(configDir string, newDriver func() (*tmux.Driver, error)) *Terminals {
-	return &Terminals{configDir: configDir, newDriver: newDriver}
+	return &Terminals{commands{configDir: configDir, newDriver: newDriver}}
 }
 
-type terminalRuntime struct {
-	cfg    config.Config
-	store  *store.Store
-	driver *tmux.Driver
-}
-
-func (t *Terminals) open() (*terminalRuntime, error) {
-	cfg, err := config.LoadDir(t.configDir)
-	if err != nil {
-		return nil, err
-	}
-	driver, err := t.newDriver()
-	if err != nil {
-		return nil, err
-	}
-	st, err := store.Open(filepath.Join(t.configDir, "state.db"))
-	if err != nil {
-		return nil, err
-	}
-	return &terminalRuntime{cfg: cfg, store: st, driver: driver}, nil
-}
-
-func (r *terminalRuntime) caller(sessionID string) (store.Session, error) {
-	if err := validSession(sessionID); err != nil {
-		return store.Session{}, err
-	}
-	sess, err := r.store.Get(sessionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return store.Session{}, fmt.Errorf("calling session %s no longer exists", sessionID)
-	}
-	return sess, err
-}
-
-func (r *terminalRuntime) terminal(id string) (store.Session, error) {
+func (r *runtime) terminal(id string) (store.Session, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return store.Session{}, errors.New("terminal_id is empty; call list_terminals to get one")
@@ -104,7 +67,7 @@ func (r *terminalRuntime) terminal(id string) (store.Session, error) {
 	return sess, nil
 }
 
-func (r *terminalRuntime) info(sess store.Session, running bool) Terminal {
+func (r *runtime) info(sess store.Session, running bool) Terminal {
 	dir := sess.Cwd
 	if running {
 		if current, err := r.driver.PaneCurrentPath(sess.ID); err == nil {
@@ -163,11 +126,11 @@ func (t *Terminals) Create(sessionID string, opts CreateTerminalOptions) (Termin
 	if !ok {
 		return Terminal{}, errors.New("no shell configured; add a tool block with shell = true to config.toml")
 	}
-	group, dir, err := runtime.createTarget(caller, opts)
+	group, dir, err := runtime.createTarget(caller, opts.Group, opts.Directory)
 	if err != nil {
 		return Terminal{}, err
 	}
-	id := uuid.NewString()[:8]
+	id := spawn.NewID()
 	sess := store.Session{
 		ID:     id,
 		Name:   toolName + "-" + id[:4],
@@ -187,96 +150,8 @@ func (t *Terminals) Create(sessionID string, opts CreateTerminalOptions) (Termin
 		_ = runtime.driver.Kill(sess.ID)
 		return Terminal{}, err
 	}
-	_ = runtime.driver.SetLabel(sess.ID, sessionLabel(sess.Group, sess.Name))
+	_ = runtime.driver.SetLabel(sess.ID, spawn.SessionLabel(sess.Group, sess.Name))
 	return runtime.info(sess, true), nil
-}
-
-func (r *terminalRuntime) createTarget(caller store.Session, opts CreateTerminalOptions) (string, string, error) {
-	group := caller.Group
-	groups, err := r.store.Groups()
-	if err != nil {
-		return "", "", err
-	}
-	byName := make(map[string]store.Group, len(groups))
-	archived := make(map[string]bool, len(groups))
-	for _, candidate := range groups {
-		byName[candidate.Name] = candidate
-		archived[candidate.Name] = candidate.Archived
-	}
-	if opts.Group != nil {
-		group = strings.TrimSpace(*opts.Group)
-		if group != "" {
-			if _, ok := byName[group]; !ok {
-				return "", "", fmt.Errorf("group %q does not exist", group)
-			}
-		}
-	}
-	if group != "" && store.EffectivelyArchived(archived, group) {
-		return "", "", fmt.Errorf("group %q is archived; restore it in Agent Manager first", group)
-	}
-	if strings.TrimSpace(opts.Directory) != "" {
-		dir, err := resolveTerminalDirectory(opts.Directory)
-		return group, dir, err
-	}
-	if opts.Group != nil {
-		for current := group; current != ""; current = parentGroup(current) {
-			if candidate := byName[current].Path; candidate != "" {
-				if dir, err := resolveTerminalDirectory(candidate); err == nil {
-					return group, dir, nil
-				}
-			}
-		}
-	}
-	dir := caller.Cwd
-	if current, err := r.driver.PaneCurrentPath(caller.ID); err == nil {
-		dir = current
-	}
-	resolved, err := resolveTerminalDirectory(dir)
-	if err != nil {
-		return "", "", fmt.Errorf("no usable directory for terminal: %w", err)
-	}
-	return group, resolved, nil
-}
-
-func resolveTerminalDirectory(raw string) (string, error) {
-	dir := strings.TrimSpace(raw)
-	if dir == "~" || strings.HasPrefix(dir, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		if dir == "~" {
-			dir = home
-		} else {
-			dir = filepath.Join(home, strings.TrimPrefix(dir, "~/"))
-		}
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", fmt.Errorf("directory %s: %w", abs, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", abs)
-	}
-	return abs, nil
-}
-
-func parentGroup(group string) string {
-	if index := strings.LastIndex(group, "/"); index >= 0 {
-		return group[:index]
-	}
-	return ""
-}
-
-func sessionLabel(group, name string) string {
-	if group == "" {
-		return name
-	}
-	return group + " · " + name
 }
 
 func (t *Terminals) Send(sessionID, terminalID, command string, keys []string) error {

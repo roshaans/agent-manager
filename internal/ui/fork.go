@@ -6,6 +6,7 @@ import (
 
 	"github.com/YoanWai/agent-manager/internal/agentsession"
 	"github.com/YoanWai/agent-manager/internal/config"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/tmux"
@@ -91,7 +92,7 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	managerID := newID()
+	managerID := spawn.NewID()
 	agentID := ""
 	if strings.Contains(tool.ForkCommand, "{new_id}") {
 		agentID = uuid.NewString()
@@ -117,7 +118,7 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 		WorktreeRepo:   source.WorktreeRepo,
 		WorktreeBranch: source.WorktreeBranch,
 	}
-	if err := m.launchNewSession(forked, tool, baseCommand, launchOptions{}); err != nil {
+	if err := m.launchNewSession(forked, tool, baseCommand, spawn.LaunchOptions{}); err != nil {
 		m.reportLaunchError(err)
 		return m, nil
 	}

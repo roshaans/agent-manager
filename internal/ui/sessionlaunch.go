@@ -1,66 +1,56 @@
 package ui
 
 import (
-	"time"
-
 	"github.com/YoanWai/agent-manager/internal/config"
-	"github.com/YoanWai/agent-manager/internal/project"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/store"
 )
 
-type launchOptions struct {
-	rollbackWorktree bool
-	// env is exported into the pane on top of what buildLaunch sets, for the
-	// project variables a run or setup script is given. Keys already set by
-	// buildLaunch are left alone, so a project cannot shadow the hook and MCP
-	// wiring a session needs to report its status.
-	env map[string]string
-	// setupMarker is the file the setup wrapper touches on success, so an
-	// auto-run script in another pane can wait for it.
-	setupMarker string
-	// setup is the project's setup script, run in the pane before the agent.
-	// It is applied here rather than by the caller because buildLaunch appends
-	// to the command it is given — MCP config, a --settings path — and those
-	// flags belong to the agent, inside the wrapper's success branch, not
-	// dangling after its fi.
-	setup string
+// The two functions below are all the manager adds to internal/spawn: the
+// list the new row joins and the status bar a warning lands on. The pane size
+// the preview will capture at goes in as a callback at construction, since it
+// changes with the terminal. Everything else about creating a session is the
+// same work whoever asked for it, so it lives in that package instead.
+
+// spawnSession creates an agent session for the New Session form and quick
+// spawn, and holds the placeholder for one that was told to name itself.
+func (m *Model) spawnSession(opts spawn.Options) error {
+	result, err := m.spawner.Create(opts)
+	if err != nil {
+		return err
+	}
+	m.sessions = append(append(m.sessions, result.Session), result.AutoRuns...)
+	m.rebuildRows()
+	// The directive went out with the launch, so the row waits for the name
+	// the agent picks instead of showing the one generated for it.
+	if result.AutoNamed {
+		if m.awaitedRenames == nil {
+			m.awaitedRenames = map[string]string{}
+		}
+		m.awaitedRenames[result.Session.ID] = result.Session.Name
+	}
+	m.noteWarnings(result.Warnings)
+	return nil
 }
 
-func (m *Model) launchNewSession(sess store.Session, tool config.Tool, baseCommand string, opts launchOptions) error {
-	if sess.CreatedAt.IsZero() {
-		sess.CreatedAt = time.Now()
-	}
-	if sess.LastStatusAt.IsZero() {
-		sess.LastStatusAt = sess.CreatedAt
-	}
-	discardWorktree := func() {
-		if opts.rollbackWorktree {
-			m.discardWorktree(sess.WorktreeRepo, sess.Cwd, sess.WorktreeBranch)
-		}
-	}
-	command, env, err := m.buildLaunch(sess.Tool, tool, baseCommand, sess.ID)
+// launchNewSession is the same for the sessions the manager builds itself:
+// a shell, a fork, a project's run script.
+func (m *Model) launchNewSession(sess store.Session, tool config.Tool, baseCommand string, opts spawn.LaunchOptions) error {
+	launched, warnings, err := m.spawner.Launch(sess, tool, baseCommand, opts)
 	if err != nil {
-		discardWorktree()
 		return err
 	}
-	for key, value := range opts.env {
-		if _, taken := env[key]; !taken {
-			env[key] = value
-		}
-	}
-	command = project.SetupCommand(opts.setup, command, opts.setupMarker)
-	if err := m.tmux.Create(sess.ID, sess.Cwd, command, env, m.previewPaneWidth(), m.previewPaneHeight()); err != nil {
-		discardWorktree()
-		return err
-	}
-	if err := m.store.CreateSession(sess); err != nil {
-		_ = m.tmux.Kill(sess.ID)
-		_ = m.hooks.Remove(sess.ID)
-		discardWorktree()
-		return err
-	}
-	labelErr := m.tmux.SetLabel(sess.ID, sessionLabel(sess.Group, sess.Name))
-	m.sessions = append(m.sessions, sess)
+	m.sessions = append(m.sessions, launched)
 	m.rebuildRows()
-	return labelErr
+	m.noteWarnings(warnings)
+	return nil
+}
+
+// noteWarnings puts what went wrong beside a session that was still created
+// on the status bar. Only the first: the bar is one line, and a caller that
+// reads it is about to be told about the session that did come up.
+func (m *Model) noteWarnings(warnings []string) {
+	if len(warnings) > 0 {
+		m.errBar.text = warnings[0]
+	}
 }

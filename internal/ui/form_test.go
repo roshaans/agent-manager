@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/YoanWai/agent-manager/internal/config"
-	"github.com/YoanWai/agent-manager/internal/hooks"
 	"github.com/YoanWai/agent-manager/internal/project"
+	"github.com/YoanWai/agent-manager/internal/spawn"
+	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -20,7 +20,7 @@ import (
 
 func TestNewSessionFormUsesSettingsDefaultTool(t *testing.T) {
 	m := buildModel(t)
-	if err := m.store.SetSetting("default_tool", "ready-tool"); err != nil {
+	if err := m.store.SetSetting(store.SettingDefaultTool, "ready-tool"); err != nil {
 		t.Fatal(err)
 	}
 	m.openForm()
@@ -223,31 +223,6 @@ func TestGroupDefaultPathFillsSessionDir(t *testing.T) {
 	m.moveGroupCursor(0) // re-resolve dir for the selected group
 	if got := m.form.dir.Value(); got != groupDir {
 		t.Fatalf("session dir should default to the group path %q, got %q", groupDir, got)
-	}
-}
-
-func TestFormPromptComposesWithSettings(t *testing.T) {
-	m := buildModel(t)
-	tool := m.cfg.Tools["claude-hooked"]
-
-	command, _, err := m.buildLaunch("claude", tool, withPrompt(tool, tool.Command, "fix the bug"), "prompt01")
-	if err != nil {
-		t.Fatalf("buildLaunch: %v", err)
-	}
-	if !strings.HasPrefix(command, "cat 'fix the bug' --mcp-config '") || !strings.Contains(command, "--settings '") {
-		t.Fatalf("command = %q", command)
-	}
-
-	flagged := config.Tool{Command: "opencode", PromptFlag: "--prompt"}
-	if got := withPrompt(flagged, flagged.Command, "do it"); got != "opencode --prompt 'do it'" {
-		t.Fatalf("flagged compose = %q", got)
-	}
-	if got := withPrompt(tool, tool.Command, ""); got != "cat" {
-		t.Fatalf("empty prompt should leave the command untouched, got %q", got)
-	}
-	sent := config.Tool{Command: "hermes --cli", PromptMode: "send"}
-	if got := withPrompt(sent, sent.Command, "do it"); got != sent.Command {
-		t.Fatalf("send-mode prompt changed launch command to %q", got)
 	}
 }
 
@@ -540,49 +515,26 @@ func TestFormRejectsDashLeadingPrompt(t *testing.T) {
 	}
 }
 
-func TestLaunchPromptInjectsDirectiveOnlyForAutoNamedWithPrompt(t *testing.T) {
-	withDirective := launchPrompt("build the api", true)
-	if !strings.HasPrefix(withDirective, renameDirective+"\n\n") || !strings.HasSuffix(withDirective, "build the api") {
-		t.Fatalf("auto-named prompt should carry the directive, got %q", withDirective)
-	}
-	named := launchPrompt("build the api", false)
-	if !strings.HasPrefix(named, renameAvailableNote+"\n\n") || !strings.HasSuffix(named, "build the api") {
-		t.Fatalf("custom-named prompt should note rename is optional later, got %q", named)
-	}
-	if strings.Contains(named, "Run rename only this once") || strings.HasPrefix(named, renameDirective) {
-		t.Fatalf("custom-named prompt must not force a rename, got %q", named)
-	}
-	if got := launchPrompt("", true); got != "" {
-		t.Fatalf("promptless session should stay clean, got %q", got)
-	}
-	if got := launchPrompt("/compact keep the api notes", true); got != "/compact keep the api notes" {
-		t.Fatalf("slash-command prompt should stay clean, got %q", got)
-	}
-	if got := launchPrompt("/compact keep the api notes", false); got != "/compact keep the api notes" {
-		t.Fatalf("named slash-command prompt should stay clean, got %q", got)
-	}
-}
-
 // Only a spawn that hands over the rename directive has a name to wait for;
 // one the user named itself is already at its final name.
 func TestSpawnAwaitsARenameOnlyWhenItAsksForOne(t *testing.T) {
 	m := buildModel(t)
 	dir := t.TempDir()
 
-	if err := m.spawnSession("claude", "claude-aaaa", dir, "", "do things", true, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Directory: dir, Prompt: "do things"}); err != nil {
 		t.Fatalf("auto-named spawn: %v", err)
 	}
-	if err := m.spawnSession("claude", "custom", dir, "", "do things", false, false); err != nil {
+	generated := lastSpawned(t, m)
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "custom", Directory: dir, Prompt: "do things"}); err != nil {
 		t.Fatalf("custom spawn: %v", err)
 	}
-	for _, sess := range m.sessions {
-		awaiting := m.awaitingRename(sess)
-		if sess.Name == "claude-aaaa" && !awaiting {
-			t.Fatal("an auto-named spawn should wait for the name its agent picks")
-		}
-		if sess.Name == "custom" && awaiting {
-			t.Fatal("a custom-named spawn was never asked to rename")
-		}
+	named := lastSpawned(t, m)
+
+	if !m.awaitingRename(generated) {
+		t.Fatalf("an auto-named spawn should wait for the name its agent picks, got %q", generated.Name)
+	}
+	if m.awaitingRename(named) {
+		t.Fatal("a custom-named spawn was never asked to rename")
 	}
 }
 
@@ -590,19 +542,19 @@ func TestSpawnMarksDeferredDirective(t *testing.T) {
 	m := buildModel(t)
 	dir := t.TempDir()
 
-	if err := m.spawnSession("claude", "claude-aaaa", dir, "", "/compact", true, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Directory: dir, Prompt: "/compact"}); err != nil {
 		t.Fatalf("slash spawn: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
 	slashID := m.sessionRows()[0].ID
-	if !sessionHasPendingInput(t, m, slashID, deferredRenameDirective) {
+	if !sessionHasPendingInput(t, m, slashID, deferredDirectiveMark) {
 		t.Fatal("slash-prompt spawn should defer the directive")
 	}
 
-	if err := m.spawnSession("claude", "claude-bbbb", dir, "", "do things", true, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Directory: dir, Prompt: "do things"}); err != nil {
 		t.Fatalf("plain spawn: %v", err)
 	}
-	if err := m.spawnSession("claude", "custom", dir, "", "/compact", false, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "custom", Directory: dir, Prompt: "/compact"}); err != nil {
 		t.Fatalf("custom spawn: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
@@ -610,7 +562,7 @@ func TestSpawnMarksDeferredDirective(t *testing.T) {
 		if sess.ID == slashID {
 			continue
 		}
-		if sessionHasPendingInput(t, m, sess.ID, deferredRenameDirective) {
+		if sessionHasPendingInput(t, m, sess.ID, deferredDirectiveMark) {
 			t.Fatalf("session %q should not defer a directive", sess.Name)
 		}
 	}
@@ -618,7 +570,7 @@ func TestSpawnMarksDeferredDirective(t *testing.T) {
 
 func TestDeferredDirectiveSentWhenPaneReady(t *testing.T) {
 	m := buildModel(t)
-	if err := m.spawnSession("ready-tool", "ready-tool-abcd", t.TempDir(), "", "", true, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "ready-tool", Directory: t.TempDir()}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
@@ -628,7 +580,7 @@ func TestDeferredDirectiveSentWhenPaneReady(t *testing.T) {
 	// already present in the pane is success; a missing mark before any
 	// send is not possible after spawnSession.
 	deadline := time.Now().Add(5 * time.Second)
-	for sessionHasPendingInput(t, m, sess.ID, deferredRenameDirective) {
+	for sessionHasPendingInput(t, m, sess.ID, deferredDirectiveMark) {
 		if time.Now().After(deadline) {
 			pane, _ := m.tmux.CapturePane(sess.ID)
 			t.Fatalf("directive never sent; pane:\n%s", pane)
@@ -647,7 +599,7 @@ func TestDeferredDirectiveSentWhenPaneReady(t *testing.T) {
 
 func TestSendModePromptSurvivesPollerRestart(t *testing.T) {
 	m := buildModel(t)
-	if err := m.spawnSession("send-tool", "custom", t.TempDir(), "", "do the work", false, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "send-tool", Name: "custom", Directory: t.TempDir(), Prompt: "do the work"}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sess := m.sessionRows()[0]
@@ -677,7 +629,7 @@ func TestSendModePromptSurvivesPollerRestart(t *testing.T) {
 
 func TestSendModeReconcilesAmbiguousDeliveryWithoutResending(t *testing.T) {
 	m := buildModel(t)
-	if err := m.spawnSession("send-tool", "custom", t.TempDir(), "", "do not resend", false, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "send-tool", Name: "custom", Directory: t.TempDir(), Prompt: "do not resend"}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sess := m.sessionRows()[0]
@@ -708,7 +660,7 @@ func TestSendModeReconcilesAmbiguousDeliveryWithoutResending(t *testing.T) {
 
 func TestSendModeSurfacesSendFailureAndDoesNotRetry(t *testing.T) {
 	m := buildModel(t)
-	if err := m.spawnSession("send-tool", "custom", t.TempDir(), "", "cannot deliver", false, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "send-tool", Name: "custom", Directory: t.TempDir(), Prompt: "cannot deliver"}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sess, err := m.store.Get(m.sessionRows()[0].ID)
@@ -747,6 +699,12 @@ func sessionPendingInputs(t *testing.T, m *Model, id string) []string {
 	return sess.PendingInputs
 }
 
+// deferredDirectiveMark identifies the rename directive delivered as its own
+// message rather than carried by a first prompt. The wording lives in
+// internal/spawn; matching a fragment keeps these tests about whether the
+// manager delivers it, not about how it is phrased.
+const deferredDirectiveMark = "agent-manager rename"
+
 func sessionHasPendingInput(t *testing.T, m *Model, id, want string) bool {
 	t.Helper()
 	for _, input := range sessionPendingInputs(t, m, id) {
@@ -755,45 +713,6 @@ func sessionHasPendingInput(t *testing.T, m *Model, id, want string) bool {
 		}
 	}
 	return false
-}
-
-func TestBuildLaunchCarriesSessionID(t *testing.T) {
-	m := buildModel(t)
-	plain := m.cfg.Tools["claude"]
-	_, env, err := m.buildLaunch("plain", plain, plain.Command, "abcd1234")
-	if err != nil {
-		t.Fatalf("buildLaunch: %v", err)
-	}
-	if env[hooks.EnvSessionID] != "abcd1234" {
-		t.Fatalf("plain tool env = %v, want session id", env)
-	}
-
-	hooked := m.cfg.Tools["claude-hooked"]
-	_, env, err = m.buildLaunch("hooked", hooked, hooked.Command, "abcd1234")
-	if err != nil {
-		t.Fatalf("buildLaunch hooked: %v", err)
-	}
-	if env[hooks.EnvSessionID] != "abcd1234" || env[hooks.EnvStatusFile] == "" {
-		t.Fatalf("hooked tool env = %v, want session id and status file", env)
-	}
-}
-
-func TestSortedToolNamesOrder(t *testing.T) {
-	cfg := config.Config{Tools: map[string]config.Tool{
-		"grok":     {Command: "grok"},
-		"gemini":   {Command: "gemini"},
-		"codex":    {Command: "codex"},
-		"claude":   {Command: "claude"},
-		"opencode": {Command: "opencode"},
-		"pi":       {Command: "pi"},
-		"zephyr":   {Command: "zephyr"},
-		"acme":     {Command: "acme"},
-	}}
-	got := sortedToolNames(cfg)
-	want := []string{"claude", "opencode", "codex", "grok", "gemini", "pi", "acme", "zephyr"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("sortedToolNames = %v want %v", got, want)
-	}
 }
 
 func initGitRepo(t *testing.T, dir string) {
@@ -819,7 +738,7 @@ func TestFormWorktreeToggleSeedsFromSetting(t *testing.T) {
 		t.Fatal("worktree should default off with no setting")
 	}
 	m.mode = modeList
-	if err := m.store.SetSetting(worktreeSetting, "on"); err != nil {
+	if err := m.store.SetSetting(store.SettingWorktreeDefault, "on"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	m.openForm()
@@ -831,7 +750,7 @@ func TestFormWorktreeToggleSeedsFromSetting(t *testing.T) {
 func TestFormWorktreeGatedInNonRepoDir(t *testing.T) {
 	m := buildModel(t)
 	plain := t.TempDir()
-	if err := m.store.SetSetting(worktreeSetting, "on"); err != nil {
+	if err := m.store.SetSetting(store.SettingWorktreeDefault, "on"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	m.openForm()
@@ -891,7 +810,7 @@ func TestFormWorktreeStaysOnInRepoDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	initGitRepo(t, repo)
-	if err := m.store.SetSetting(worktreeSetting, "on"); err != nil {
+	if err := m.store.SetSetting(store.SettingWorktreeDefault, "on"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	m.openForm()
@@ -914,7 +833,7 @@ func TestSpawnWorktreeSessionCreatesWorktree(t *testing.T) {
 	}
 	initGitRepo(t, repo)
 
-	if err := m.spawnSession("claude", "wt-feat", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-feat", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sessions, err := m.store.ListSessions(true)
@@ -937,7 +856,7 @@ func TestSpawnWorktreeSessionCreatesWorktree(t *testing.T) {
 func TestSpawnWorktreeInNonRepoBlocks(t *testing.T) {
 	m := buildModel(t)
 	plain := t.TempDir()
-	err := m.spawnSession("claude", "wt-fail", plain, "", "", false, true)
+	err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-fail", Directory: plain, Worktree: true})
 	if err == nil {
 		t.Fatal("non-repo dir must block the spawn")
 	}
@@ -966,7 +885,7 @@ func TestSpawnWorktreeRollsBackWhenLaunchBuildFails(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(hooksDir, 0o755) })
 
-	err := m.spawnSession("claude", "wt-launchfail", repo, "", "", false, true)
+	err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-launchfail", Directory: repo, Worktree: true})
 	if err == nil {
 		t.Fatal("launch-build failure must block the spawn")
 	}
@@ -1043,7 +962,7 @@ func TestWorktreeSpawnFallsBackToUncommittedSourceSettings(t *testing.T) {
 	initGitRepo(t, repo)
 	projectSettingsDir(t, repo, "setup = \"touch fallback-ran\"\n")
 
-	if err := m.spawnSession("claude", "wt-fallback", repo, "", "", false, true); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-fallback", Directory: repo, Worktree: true}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	sessions, err := m.store.ListSessions(true)
@@ -1075,7 +994,7 @@ func TestWorktreeSpawnWithBrokenSettingsDiscardsTheWorktree(t *testing.T) {
 	initGitRepo(t, repo)
 	projectSettingsDir(t, repo, "port_base = 70000\n")
 
-	err := m.spawnSession("claude", "wt-broken", repo, "", "", false, true)
+	err := m.spawnSession(spawn.Options{Tool: "claude", Name: "wt-broken", Directory: repo, Worktree: true})
 	if err == nil {
 		t.Fatal("a spawn with unloadable settings should fail")
 	}

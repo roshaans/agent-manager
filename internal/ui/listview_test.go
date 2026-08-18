@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/YoanWai/agent-manager/internal/sysstat"
@@ -609,10 +610,10 @@ func TestEveryReadingOfASessionStandsInForAnAwaitedName(t *testing.T) {
 		t.Fatalf("create group: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
-	const generated = "claude-ab12"
-	if err := m.spawnSession("claude", generated, dir, "backend", "do things", true, false); err != nil {
+	if err := m.spawnSession(spawn.Options{Tool: "claude", Directory: dir, Group: "backend", Prompt: "do things"}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
+	generated := lastSpawned(t, m).Name
 
 	type reading struct{ where, text string }
 	m.selectGroupRow(t, "backend")

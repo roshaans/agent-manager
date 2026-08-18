@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -469,7 +470,7 @@ func TestQuickSpawnOnGroupCreatesSession(t *testing.T) {
 	if err := m.store.CreateGroup("backend", dir); err != nil {
 		t.Fatalf("create group: %v", err)
 	}
-	if err := m.store.SetSetting("default_tool", "claude"); err != nil {
+	if err := m.store.SetSetting(store.SettingDefaultTool, "claude"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	m.applyCmd(t, m.refreshCmd())
@@ -589,7 +590,7 @@ func TestQuickWorktreeToggle(t *testing.T) {
 
 func TestQuickWorktreeSeedsFromSetting(t *testing.T) {
 	m := buildModel(t)
-	if err := m.store.SetSetting(worktreeSetting, "on"); err != nil {
+	if err := m.store.SetSetting(store.SettingWorktreeDefault, "on"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	m.openQuickMode()

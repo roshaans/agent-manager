@@ -2,8 +2,6 @@ package ui
 
 import (
 	"net/url"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/store"
@@ -15,68 +13,25 @@ import (
 // is still enabled, else the first enabled tool. A store error still yields
 // the fallback but is surfaced, never swallowed.
 func (m *Model) defaultTool() string {
-	names := m.enabledToolNames()
-	if len(names) == 0 {
-		return ""
-	}
-	chosen, err := m.store.Setting("default_tool")
+	chosen, err := m.store.Setting(store.SettingDefaultTool)
 	if err != nil {
 		m.errBar.text = "reading default tool setting: " + err.Error()
-		return names[0]
 	}
-	if chosen != "" {
-		for _, name := range names {
-			if name == chosen {
-				return chosen
-			}
-		}
-	}
-	return names[0]
+	return m.cfg.DefaultTool(chosen, m.hiddenTools())
 }
 
 // hiddenTools returns the set of CLI names the user turned off for new sessions.
 func (m *Model) hiddenTools() map[string]bool {
-	raw, err := m.store.Setting(hiddenToolsSetting)
+	raw, err := m.store.Setting(store.SettingHiddenTools)
 	if err != nil {
 		m.errBar.text = "reading hidden tools setting: " + err.Error()
 		return nil
 	}
-	return parseHiddenTools(raw)
-}
-
-func parseHiddenTools(raw string) map[string]bool {
-	if raw == "" {
-		return nil
-	}
-	hidden := make(map[string]bool)
-	for _, part := range strings.Split(raw, ",") {
-		name := strings.TrimSpace(part)
-		if name != "" {
-			hidden[name] = true
-		}
-	}
-	if len(hidden) == 0 {
-		return nil
-	}
-	return hidden
-}
-
-func formatHiddenTools(hidden map[string]bool) string {
-	if len(hidden) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(hidden))
-	for name, on := range hidden {
-		if on {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return strings.Join(names, ",")
+	return store.ParseHiddenTools(raw)
 }
 
 func (m *Model) defaultWorktree() bool {
-	chosen, err := m.store.Setting(worktreeSetting)
+	chosen, err := m.store.Setting(store.SettingWorktreeDefault)
 	if err != nil {
 		m.errBar.text = "reading worktree setting: " + err.Error()
 		return false
@@ -87,15 +42,7 @@ func (m *Model) defaultWorktree() bool {
 // groupWorktree resolves a group's spawn-in-worktree default: the nearest
 // ancestor with an explicit choice wins, else the global setting.
 func (m *Model) groupWorktree(group string) bool {
-	for g := group; g != ""; g = parentGroup(g) {
-		switch m.groupWorktrees[g] {
-		case "on":
-			return true
-		case "off":
-			return false
-		}
-	}
-	return m.defaultWorktree()
+	return store.WorktreeDefault(m.groupWorktrees, group, m.defaultWorktree())
 }
 
 // worktreeUnavailable is what the worktree toggle reads when the target
@@ -290,7 +237,7 @@ func (m *Model) saveAndCloseSettings() (tea.Model, tea.Cmd) {
 
 func (m *Model) persistSettings() {
 	if len(m.settings.toolNames) > 0 {
-		if err := m.store.SetSetting("default_tool", m.settings.toolNames[m.settings.toolIndex]); err != nil {
+		if err := m.store.SetSetting(store.SettingDefaultTool, m.settings.toolNames[m.settings.toolIndex]); err != nil {
 			m.errBar.text = err.Error()
 		}
 	}
@@ -349,7 +296,7 @@ func (m *Model) persistSettings() {
 	if m.settings.worktreeDefault {
 		worktreeChoice = "on"
 	}
-	if err := m.store.SetSetting(worktreeSetting, worktreeChoice); err != nil {
+	if err := m.store.SetSetting(store.SettingWorktreeDefault, worktreeChoice); err != nil {
 		m.errBar.text = err.Error()
 	}
 	placement := "pinned"
@@ -380,7 +327,7 @@ func (m *Model) persistSettings() {
 }
 
 func (m *Model) openCLIPicker() {
-	names := sortedToolNames(m.cfg)
+	names := m.cfg.AgentTools()
 	hidden := make(map[string]bool)
 	for name, on := range m.hiddenTools() {
 		if on {
@@ -416,7 +363,7 @@ func (m *Model) handleCLIPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.toggleCLIHidden(m.settings.cliNames[m.settings.cliCursor])
 	case "esc":
-		if err := m.store.SetSetting(hiddenToolsSetting, formatHiddenTools(m.settings.cliHidden)); err != nil {
+		if err := m.store.SetSetting(store.SettingHiddenTools, store.FormatHiddenTools(m.settings.cliHidden)); err != nil {
 			m.errBar.text = err.Error()
 		}
 		m.settings.cliPicker = false

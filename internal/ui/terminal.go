@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/config"
+	"github.com/YoanWai/agent-manager/internal/spawn"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
@@ -69,13 +70,13 @@ func (m *Model) openTerminal() (tea.Model, tea.Cmd) {
 	// Named and linked for the session it was opened on, the way a run script
 	// already is: a shell called after four random hex digits says nothing
 	// about which of a group's worktrees it landed in.
-	name := toolName + "-" + newID()[:4]
+	name := toolName + "-" + spawn.NewID()[:4]
 	parent, fromSession := m.shellOrigin()
 	if fromSession {
 		name = m.unusedName(toolName + "-" + parent.Name)
 	}
 	sess := store.Session{
-		ID:       newID(),
+		ID:       spawn.NewID(),
 		Name:     name,
 		Tool:     toolName,
 		Cwd:      dir,
@@ -83,7 +84,7 @@ func (m *Model) openTerminal() (tea.Model, tea.Cmd) {
 		Status:   status.Starting,
 		ParentID: parent.ID,
 	}
-	if err := m.launchNewSession(sess, tool, tool.Command, launchOptions{}); err != nil {
+	if err := m.launchNewSession(sess, tool, tool.Command, spawn.LaunchOptions{}); err != nil {
 		m.errBar.text = err.Error()
 		return m, nil
 	}
