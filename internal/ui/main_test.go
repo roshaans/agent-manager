@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/YoanWai/agent-manager/internal/git"
 )
 
 // testSocket is an isolated tmux server for this package's tests, so they
@@ -20,6 +22,9 @@ const testSocket = "amuitest"
 // TestFocusWatchReportsCursor).
 func TestMain(m *testing.M) {
 	unsignCommits()
+	// No test reaches a network. A seeded repository names a remote it
+	// cannot talk to, and a pass that really fetched would hang on it.
+	fetchRemote = func(*git.Driver, string) {}
 	// kill-server fails whenever no server is up, which is the normal case.
 	tmuxCmd("kill-server").Run()
 	// Without tmux the run still starts: each test skips through its own
