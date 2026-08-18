@@ -253,19 +253,20 @@ func toolAnnotations(readOnly, destructive, openWorld bool) *mcp.ToolAnnotations
 	}
 }
 
-func formatSession(session sessioncmd.Session) string {
-	group := session.Group
+func displayGroup(group string) string {
 	if group == "" {
-		group = "root"
+		return "root"
 	}
+	return group
+}
+
+func formatSession(session sessioncmd.Session) string {
 	line := fmt.Sprintf("%s session %s (%s) in %s at %s",
-		session.Tool, session.Name, session.ID, group, session.Directory)
+		session.Tool, session.Name, session.ID, displayGroup(session.Group), session.Directory)
 	if session.Branch != "" {
 		line += " on branch " + session.Branch
 	}
 	for _, run := range session.AutoRuns {
-		// Each holds a port and a process the caller would otherwise
-		// rediscover by starting its own.
 		line += "\nstarted " + run.Name + " (" + run.ID + ") beside it"
 	}
 	if len(session.Warnings) > 0 {
@@ -277,11 +278,8 @@ func formatSession(session sessioncmd.Session) string {
 }
 
 func formatTerminal(terminal sessioncmd.Terminal) string {
-	group := terminal.Group
-	if group == "" {
-		group = "root"
-	}
-	return fmt.Sprintf("%s (%s) in %s at %s", terminal.Name, terminal.ID, group, terminal.Directory)
+	return fmt.Sprintf("%s (%s) in %s at %s",
+		terminal.Name, terminal.ID, displayGroup(terminal.Group), terminal.Directory)
 }
 
 func formatTerminalList(terminals []sessioncmd.Terminal) string {

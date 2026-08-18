@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/YoanWai/agent-manager/internal/status"
+	"github.com/YoanWai/agent-manager/internal/store"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -281,10 +282,7 @@ func (m *Model) selectedGroup() (string, bool) {
 }
 
 func parentGroup(group string) string {
-	if idx := strings.LastIndex(group, "/"); idx >= 0 {
-		return group[:idx]
-	}
-	return ""
+	return store.ParentGroup(group)
 }
 
 // groupStatusBreakdown renders "2 working · 1 waiting" for the subtree,

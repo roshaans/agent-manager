@@ -62,11 +62,10 @@ func (s *Spawner) pane() (int, int) {
 	return s.paneSize()
 }
 
-// Options describe an agent session to create. Everything here is already
-// resolved: Directory exists, Group is a real group, Tool names a configured
-// agent CLI. Resolving those is the caller's job, because a default means
-// different things to the form (the row under the cursor) and to an agent
-// (the session it is calling from).
+// Options describe an agent session to create, with every default already
+// resolved by the caller: a default means different things to the form (the
+// row under the cursor) and to an agent (the session it is calling from).
+// Create still refuses what could not become a session.
 type Options struct {
 	Tool string
 	// Name empty generates one, and the session is asked to rename itself
@@ -154,7 +153,7 @@ func (s *Spawner) Create(opts Options) (Result, error) {
 		// would otherwise nest the new worktree under its own.
 		root, err := s.git.MainRepoRoot(dir)
 		if err != nil {
-			return Result{}, err
+			return Result{}, errors.New("worktree sessions need a git repository: " + dir + " is not one")
 		}
 		path, branch, err := s.git.AddWorktree(root, name)
 		if err != nil {

@@ -70,14 +70,6 @@ func (r *runtime) caller(sessionID string) (store.Session, error) {
 // path, else wherever the calling agent currently is — which for a worktree
 // session is that worktree, and is what makes the common call need no
 // arguments at all.
-// adoptPaneTheme reads the manager's pane theme off the tmux server, so a
-// pane created from this process opens on it and its agent sees COLORFGBG.
-// Called only where a pane is about to be created: it costs two tmux execs,
-// which the read-only commands an agent polls in a loop should not pay.
-func (r *runtime) adoptPaneTheme() {
-	r.driver.AdoptServerPaneTheme()
-}
-
 func (r *runtime) createTarget(caller store.Session, groups []store.Group, wantGroup *string, directory string) (string, string, error) {
 	group := caller.Group
 	byName := make(map[string]store.Group, len(groups))
@@ -102,7 +94,7 @@ func (r *runtime) createTarget(caller store.Session, groups []store.Group, wantG
 		return group, dir, err
 	}
 	if wantGroup != nil {
-		for current := group; current != ""; current = parentGroup(current) {
+		for current := group; current != ""; current = store.ParentGroup(current) {
 			if candidate := byName[current].Path; candidate != "" {
 				if dir, err := resolveDirectory(candidate); err == nil {
 					return group, dir, nil
@@ -146,11 +138,4 @@ func resolveDirectory(raw string) (string, error) {
 		return "", fmt.Errorf("%s is not a directory", abs)
 	}
 	return abs, nil
-}
-
-func parentGroup(group string) string {
-	if index := strings.LastIndex(group, "/"); index >= 0 {
-		return group[:index]
-	}
-	return ""
 }

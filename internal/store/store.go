@@ -1121,12 +1121,12 @@ func (s *Store) SwapGroupOrder(path, targetPath string, siblingOrder ...string) 
 	if path == "" || targetPath == "" {
 		return fmt.Errorf("cannot reorder the root group")
 	}
-	parent := parentPath(path)
-	if parent != parentPath(targetPath) {
+	parent := ParentGroup(path)
+	if parent != ParentGroup(targetPath) {
 		return fmt.Errorf("groups %s and %s are not siblings", path, targetPath)
 	}
 	for _, sibling := range siblingOrder {
-		if parentPath(sibling) != parent {
+		if ParentGroup(sibling) != parent {
 			return fmt.Errorf("group %s is not a sibling of %s", sibling, path)
 		}
 		if err := s.ensureGroup(sibling); err != nil {
@@ -1153,7 +1153,10 @@ func (s *Store) SwapGroupOrder(path, targetPath string, siblingOrder ...string) 
 	return s.persistGroupOrder(groups)
 }
 
-func parentPath(path string) string {
+// ParentGroup is the group holding a path, "" for a top-level one. The one
+// splitter for group paths, so every walk over the tree agrees where a
+// level ends.
+func ParentGroup(path string) string {
 	if idx := strings.LastIndex(path, "/"); idx >= 0 {
 		return path[:idx]
 	}

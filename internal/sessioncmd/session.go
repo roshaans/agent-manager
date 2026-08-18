@@ -108,7 +108,7 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 		return Session{}, err
 	}
 
-	runtime.adoptPaneTheme()
+	runtime.driver.AdoptServerPaneTheme()
 	spawner := spawn.New(runtime.cfg, runtime.store, runtime.driver,
 		hooks.NewManager(s.configDir), gitDriver, nil)
 	result, err := spawner.Create(spawn.Options{
@@ -167,25 +167,18 @@ func (r *runtime) resolveTool(named string) (string, error) {
 }
 
 // resolveWorktree answers whether the new session gets its own worktree. An
-// explicit request that cannot be met is an error; an inherited default that
-// cannot be met just does not apply, the way the manager's own toggle greys
-// itself out in a directory that is not a repository.
+// explicit choice passes through — spawn refuses a true it cannot honour —
+// while the inherited default only applies where a worktree is possible, the
+// way the manager's own toggle greys itself out in a directory that is not a
+// repository.
 func (r *runtime) resolveWorktree(want *bool, groups []store.Group, group, dir string, gitDriver *git.Driver) (bool, error) {
-	if gitDriver == nil {
-		if want != nil && *want {
-			return false, errors.New("worktree sessions need git installed")
-		}
-		return false, nil
-	}
-	_, repoErr := gitDriver.RepoRoot(dir)
-	capable := repoErr == nil
 	if want != nil {
-		if *want && !capable {
-			return false, fmt.Errorf("worktree sessions need a git repository: %s is not one", dir)
-		}
 		return *want, nil
 	}
-	if !capable {
+	if gitDriver == nil {
+		return false, nil
+	}
+	if _, err := gitDriver.RepoRoot(dir); err != nil {
 		return false, nil
 	}
 	fallback, err := r.setting(store.SettingWorktreeDefault)

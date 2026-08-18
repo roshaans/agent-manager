@@ -134,7 +134,7 @@ func (t *Terminals) Create(sessionID string, opts CreateTerminalOptions) (Termin
 	if err != nil {
 		return Terminal{}, err
 	}
-	runtime.adoptPaneTheme()
+	runtime.driver.AdoptServerPaneTheme()
 	id := spawn.NewID()
 	sess := store.Session{
 		ID:     id,
