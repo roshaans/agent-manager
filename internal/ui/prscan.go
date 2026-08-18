@@ -44,7 +44,12 @@ const (
 	prListLimit = "100"
 	// prDraftMark rides after the number on a draft, since the dimmed chip
 	// alone says "draft" only to a reader who already knows it does.
-	prDraftMark = "↑"
+	//
+	// A pencil rather than an arrow. ↑ and ↓ mean "move the cursor" on every
+	// other row of this app, and beside a git-adjacent number an up arrow
+	// reads as ahead-of-upstream — which is a thing this badge does not say,
+	// and a thing a later badge may well want to.
+	prDraftMark = "✎"
 )
 
 // How a recorded link was arrived at, which decides whether it leads or

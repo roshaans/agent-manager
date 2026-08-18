@@ -115,7 +115,7 @@ lazygit has to be on `PATH` — nothing is configurable here, and the status lin
 
 ## Pull requests
 
-A session with an open pull request wears its number: `#328` beside the name, dimmed and marked `↑` while the pull request is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
+A session with an open pull request wears its number: `#328` beside the name, dimmed and marked `✎` while the pull request is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
 
 `P` on a session with **no** pull request offers to open one: `↵` pushes the branch and creates it, titled from its commits, in the repository the branch was pushed to. `r` opens the repository page, which is what `P` used to do here on its own. Creating it this way is the only moment the link between a session and its pull request is a fact rather than a reading — everything below is working out after the event what this knows at it.
 
