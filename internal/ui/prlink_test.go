@@ -145,22 +145,6 @@ func TestPRKeyLooksUpAColdRow(t *testing.T) {
 	}
 }
 
-// A listing that holds nobody else's branch leaves this one with no pull
-// request, and the repository is what a reader gets instead.
-func TestPRKeyFallsBackToTheRepository(t *testing.T) {
-	m := buildModel(t)
-	pretendGH(t)
-	opened := captureOpenedLink(t)
-	captureListing(t, pullRequest{Number: 4, URL: "https://github.com/owner/repo/pull/4", Head: "someone-else"})
-	prRepo(t, m, "git@github.com:owner/repo.git")
-
-	pressPRKey(t, m)
-
-	if want := "https://github.com/owner/repo"; *opened != want {
-		t.Fatalf("opened %q, want the repository %q", *opened, want)
-	}
-}
-
 // Two pull requests off one branch cannot be picked between by guessing, so
 // the reader picks.
 func TestPRKeyOpensTheChooserForSeveral(t *testing.T) {

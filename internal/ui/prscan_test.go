@@ -216,3 +216,130 @@ func gitAt(t *testing.T, dir string, args ...string) {
 // noPane stands in for a session that printed nothing, which is what most of
 // these tests are about: the branch, and nothing observed.
 func noPane(string) string { return "" }
+
+// captureCommitPulls swaps the seam that asks which pull requests contain a
+// commit, recording the SHA it was asked about.
+func captureCommitPulls(t *testing.T, prs ...pullRequest) *string {
+	t.Helper()
+	var sha string
+	prev := commitPullRequests
+	commitPullRequests = func(_ context.Context, _, _, want string) []pullRequest {
+		sha = want
+		return prs
+	}
+	t.Cleanup(func() { commitPullRequests = prev })
+	return &sha
+}
+
+// A commit is a git fact where a branch name is a label, so a pull request
+// whose head branch nobody here is on is still found through the work itself.
+func TestScanFindsAPullRequestByCommit(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t) // the branch listing knows nothing
+	byCommit := pullRequest{Number: 5, URL: "https://github.com/me/fork/pull/5", Head: "renamed", State: "OPEN"}
+	sha := captureCommitPulls(t, byCommit)
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	found, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	if len(found["s1"]) != 1 || found["s1"][0].Number != 5 {
+		t.Fatalf("found %v, want the pull request the commit is in", found["s1"])
+	}
+	head := gitOut(t, repo, "rev-parse", "HEAD")
+	if *sha != head {
+		t.Fatalf("asked about %q, want the session's own commit %q", *sha, head)
+	}
+}
+
+// Sessions sharing a checkout share a commit, so they share the one lookup.
+func TestScanAsksAboutACommitOnce(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t)
+	calls := 0
+	prev := commitPullRequests
+	commitPullRequests = func(context.Context, string, string, string) []pullRequest {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() { commitPullRequests = prev })
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	scanPullRequests(drv, noPane, []prScanTarget{
+		{sessID: "s1", dir: repo},
+		{sessID: "s2", dir: repo},
+	})
+
+	if calls != 1 {
+		t.Fatalf("asked about the same commit %d times, want once", calls)
+	}
+}
+
+// The sources add to each other rather than replacing, and the one that
+// knows most leads, since that is the one P opens.
+func TestScanOrdersCreatedThenCommitThenBranch(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	recorded := pullRequest{Number: 1, URL: "u/1", State: "OPEN"}
+	byCommit := pullRequest{Number: 2, URL: "u/2", State: "OPEN", Head: "other"}
+	byBranch := pullRequest{Number: 3, URL: "u/3", State: "OPEN", Head: "main"}
+	prev := ghListRun
+	ghListRun = func(context.Context, string, string) []pullRequest { return []pullRequest{byBranch} }
+	prevView := viewPullRequest
+	viewPullRequest = func(context.Context, string, string) pullRequest { return recorded }
+	t.Cleanup(func() { ghListRun, viewPullRequest = prev, prevView })
+	captureCommitPulls(t, byCommit)
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	found, _ := scanPullRequests(drv, noPane, []prScanTarget{
+		{sessID: "s1", dir: repo, prURL: recorded.URL, prSource: prSourceCreated},
+	})
+
+	var got []int
+	for _, pr := range found["s1"] {
+		got = append(got, pr.Number)
+	}
+	if !slices.Equal(got, []int{1, 2, 3}) {
+		t.Fatalf("found %v, want created, then commit, then branch", got)
+	}
+}
+
+// A session asked to look at somebody else's pull request prints that address
+// too. It is a reading, not a fact, so it must never displace the commit that
+// says which pull request the session's own work is in.
+func TestScanRanksAPrintedAddressBehindTheCommit(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	mine := pullRequest{Number: 9, URL: "https://github.com/me/fork/pull/9", State: "OPEN", Head: "other"}
+	theirs := pullRequest{Number: 4, URL: "https://github.com/me/fork/pull/4", State: "OPEN", Head: "someone"}
+	prev := ghListRun
+	ghListRun = func(context.Context, string, string) []pullRequest { return []pullRequest{theirs} }
+	prevView := viewPullRequest
+	viewPullRequest = func(context.Context, string, string) pullRequest { return theirs }
+	t.Cleanup(func() { ghListRun, viewPullRequest = prev, prevView })
+	captureCommitPulls(t, mine)
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+	pane := func(string) string { return "have a look at " + theirs.URL }
+
+	found, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	if len(found["s1"]) == 0 || found["s1"][0].Number != 9 {
+		t.Fatalf("found %v, want the commit's own pull request leading", found["s1"])
+	}
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}

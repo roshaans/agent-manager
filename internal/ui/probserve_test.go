@@ -116,7 +116,7 @@ func TestScanKeepsARecordedLinkAfterItScrollsAway(t *testing.T) {
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
 	found, links := scanPullRequests(drv, noPane, []prScanTarget{
-		{sessID: "s1", dir: repo, prURL: recorded},
+		{sessID: "s1", dir: repo, prURL: recorded, prSource: prSourceCreated},
 	})
 
 	if len(found["s1"]) != 1 || found["s1"][0].URL != recorded {
@@ -143,7 +143,7 @@ func TestScanDropsAMergedRecordedLink(t *testing.T) {
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
 	found, _ := scanPullRequests(drv, noPane, []prScanTarget{
-		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/2"},
+		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/2", prSource: prSourceCreated},
 	})
 
 	if len(found) != 0 {
@@ -152,8 +152,10 @@ func TestScanDropsAMergedRecordedLink(t *testing.T) {
 }
 
 // A session that opened a pull request elsewhere has not stopped working on
-// the branch it is sitting on, so it keeps both.
-func TestScanKeepsTheBranchPullRequestBesideTheRecordedOne(t *testing.T) {
+// the branch it is sitting on, so it keeps both — the branch first, because
+// the branch is a thing this manager can check and the printed address is a
+// thing it can only believe.
+func TestScanKeepsTheBranchPullRequestBesideThePrintedOne(t *testing.T) {
 	drv := scanDriver(t)
 	pretendGH(t)
 	onBranch := pullRequest{Number: 1, URL: "https://github.com/me/fork/pull/1", Head: "main", State: "OPEN"}
@@ -172,8 +174,7 @@ func TestScanKeepsTheBranchPullRequestBesideTheRecordedOne(t *testing.T) {
 	if len(found["s1"]) != 2 {
 		t.Fatalf("found %v, want both", found["s1"])
 	}
-	// The one it produced leads, since that is the one the key should open.
-	if found["s1"][0].Number != 2 || found["s1"][1].Number != 1 {
-		t.Fatalf("found %v, want the recorded one first", found["s1"])
+	if found["s1"][0].Number != 1 || found["s1"][1].Number != 2 {
+		t.Fatalf("found %v, want the branch first and the printed one after", found["s1"])
 	}
 }

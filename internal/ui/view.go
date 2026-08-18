@@ -45,6 +45,8 @@ func (m *Model) View() string {
 		frame = m.viewRulesView()
 	case modePRPick:
 		frame = m.viewPRPick()
+	case modePRCreate:
+		frame = m.viewPRCreate()
 	case modeGroupForm:
 		frame = m.viewGroupForm()
 	case modeDiff:

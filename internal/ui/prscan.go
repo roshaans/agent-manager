@@ -54,6 +54,13 @@ const (
 	prDraftMark = "↑"
 )
 
+// How a recorded link was arrived at, which decides whether it leads or
+// trails the sources that read git rather than a screen.
+const (
+	prSourceCreated  = "created"
+	prSourceObserved = "observed"
+)
+
 type prScanTickMsg struct{}
 
 // prScanMsg carries a finished pass: each session's pull requests, and the
@@ -80,8 +87,10 @@ type prScanTarget struct {
 	dir    string
 	branch string
 	// prURL is the link already recorded for this session, so a pass that
-	// finds nothing new keeps showing what an earlier one established.
-	prURL string
+	// finds nothing new keeps showing what an earlier one established, and
+	// prSource is how it was arrived at.
+	prURL    string
+	prSource string
 }
 
 // prScanCmd reads the rows a pass covers on the event loop and hands the slow
@@ -121,19 +130,20 @@ func (m *Model) prScanTargets() []prScanTarget {
 			continue
 		}
 		targets = append(targets, prScanTarget{
-			sessID: sess.ID,
-			dir:    sess.Cwd,
-			branch: sess.WorktreeBranch,
-			prURL:  sess.PRURL,
+			sessID:   sess.ID,
+			dir:      sess.Cwd,
+			branch:   sess.WorktreeBranch,
+			prURL:    sess.PRURL,
+			prSource: sess.PRSource,
 		})
 	}
 	return targets
 }
 
 // prPlace is what a directory turns out to be: the checkout it belongs to,
-// the branch that checkout is on, and the web address of the repository it
-// pushes to.
-type prPlace struct{ root, branch, repoURL string }
+// the branch and commit that checkout is on, and the web address of the
+// repository it pushes to.
+type prPlace struct{ root, branch, head, repoURL string }
 
 // scanPullRequests is a whole pass, off the event loop.
 //
@@ -151,6 +161,7 @@ func scanPullRequests(drv *git.Driver, capture func(string) string, targets []pr
 	places := map[string]prPlace{}
 	listings := map[string][]pullRequest{}
 	viewed := map[string]pullRequest{}
+	commits := map[string][]pullRequest{}
 	found := map[string][]pullRequest{}
 	links := map[string]string{}
 	for _, target := range targets {
@@ -168,32 +179,73 @@ func scanPullRequests(drv *git.Driver, capture func(string) string, targets []pr
 			listings[place.repoURL] = listing
 		}
 
-		// The recorded link comes first, and a fresher one printed since
-		// replaces it. Both outrank the branch, which is a guess about what
-		// the session is doing where these two are a record of what it did.
-		link := target.prURL
-		if seen := observePR(capture(target.sessID), allowedRepos(place.repoURL, listing)); seen != "" && seen != link {
-			link, links[target.sessID] = seen, seen
-		}
+		// Sources in descending order of how much they know, each adding
+		// what the ones before it missed rather than replacing them:
+		//
+		//  1. created — this manager opened the pull request. A fact.
+		//  2. commit — the session's own commit is in the pull request.
+		//     A git fact, and the one branch names get wrong.
+		//  3. branch — the checkout sits on the pull request's head branch.
+		//     A label, and only as good as labels are.
+		//  4. printed — an address the session put on screen. A reading,
+		//     and last, because a session asked to look at somebody else's
+		//     pull request prints that one too. It must never displace a
+		//     commit that says otherwise.
 		var prs []pullRequest
-		if link != "" {
-			if pr, ok := lookupPR(ctx, place.root, link, listing, viewed); ok && pr.open() {
+		seen := map[string]bool{}
+		add := func(candidates ...pullRequest) {
+			for _, pr := range candidates {
+				if pr.URL == "" || seen[pr.URL] || !pr.open() {
+					continue
+				}
+				seen[pr.URL] = true
 				prs = append(prs, pr)
 			}
 		}
+
+		// A link this manager opened leads; one merely printed waits its
+		// turn at the end.
+		created, printed := "", ""
+		if target.prSource == prSourceCreated {
+			created = target.prURL
+		} else {
+			printed = target.prURL
+		}
+		if seen := observePR(capture(target.sessID), allowedRepos(place.repoURL, listing)); seen != "" && seen != target.prURL {
+			printed, links[target.sessID] = seen, seen
+		}
+		if created != "" {
+			if pr, ok := lookupPR(ctx, place.root, created, listing, viewed); ok {
+				add(pr)
+			}
+		}
+
+		slug := prRepoSlug(place.repoURL)
+		byCommit, known := commits[slug+" "+place.head]
+		if !known {
+			byCommit = commitPullRequests(ctx, place.root, slug, place.head)
+			commits[slug+" "+place.head] = byCommit
+		}
+		add(byCommit...)
 
 		branch := place.branch
 		if branch == "" {
 			branch = target.branch
 		}
-		// The branch's own pull requests join the recorded one rather than
-		// losing to it: a session that opened one somewhere else has not
-		// stopped working on the branch it is sitting on.
+		// The branch joins rather than losing: a session that opened a pull
+		// request somewhere else has not stopped working on the branch it is
+		// sitting on.
 		if branch != "" {
 			for _, pr := range listing {
-				if pr.Head == branch && pr.URL != link {
-					prs = append(prs, pr)
+				if pr.Head == branch {
+					add(pr)
 				}
+			}
+		}
+
+		if printed != "" {
+			if pr, ok := lookupPR(ctx, place.root, printed, listing, viewed); ok {
+				add(pr)
 			}
 		}
 		if len(prs) > 0 {
@@ -249,7 +301,47 @@ func locatePlace(drv *git.Driver, dir string) prPlace {
 	if repo, err := drv.OpenRepo(root); err == nil && !repo.Detached && !repo.Unborn {
 		place.branch = repo.Branch
 	}
+	if head, err := drv.HeadSHA(root); err == nil {
+		place.head = head
+	}
 	return place
+}
+
+// commitPullRequests is the seam tests swap for asking which pull requests
+// contain a commit.
+var commitPullRequests = ghCommitPullRequests
+
+// commitPullsShape rewrites the API's own field names into the ones a listing
+// uses, so a pull request reads the same whichever call found it.
+const commitPullsShape = `[.[] | {number, url: .html_url, title, isDraft: .draft, ` +
+	`state: (.state|ascii_upcase), headRefName: .head.ref, baseRefName: .base.ref}]`
+
+// ghCommitPullRequests asks which pull requests contain a commit.
+//
+// This is the identification a branch's name cannot give. A name is a label
+// that two forks can both be using and that a rename detaches from the pull
+// request it belonged to; a commit either is in a pull request or is not, and
+// the answer comes from the same place the pull request does.
+//
+// Only a pushed commit resolves. One that exists nowhere but this machine
+// answers 404, which is the right answer: nobody could have opened a pull
+// request for work they have never seen.
+func ghCommitPullRequests(ctx context.Context, root, slug, sha string) []pullRequest {
+	if slug == "" || sha == "" {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "gh", "api",
+		"repos/"+slug+"/commits/"+sha+"/pulls", "--jq", commitPullsShape)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var prs []pullRequest
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil
+	}
+	return prs
 }
 
 // listPullRequests is the seam tests swap for the real gh call.
