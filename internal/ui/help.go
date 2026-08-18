@@ -175,7 +175,7 @@ func helpSections() []helpSection {
 			{"esc", "back"},
 		}},
 		{title: "pull requests (P)", rows: [][2]string{
-			{"", "a #number beside a session is the pull request it produced"},
+			{"", "❨#number❩ beside a session is the pull request it produced"},
 			{"", "dimmed and marked " + prDraftMark + " while that pull request is a draft"},
 			{"", "+1 counts the others when a session has more than one"},
 			{"↵", "with none: push the branch and open one, recorded here"},
@@ -184,8 +184,8 @@ func helpSections() []helpSection {
 			{"esc", "back"},
 		}},
 		{title: "ahead and behind", rows: [][2]string{
-			{"", "↑2 beside a session: two commits it has not pushed"},
-			{"", "↓3: three its remote has that it does not, coloured to be noticed"},
+			{"", "❨↑2❩ beside a session: two commits it has not pushed"},
+			{"", "❨↓3❩: three its remote has, coloured to be noticed"},
 			{"", "nothing: no upstream to compare against, not the same as in step"},
 			{"", "read once a minute, one fetch per repository, not per session"},
 		}},

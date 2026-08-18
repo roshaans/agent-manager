@@ -650,9 +650,9 @@ func TestSyncChip(t *testing.T) {
 		"unknown": {},
 	}}
 	for _, tc := range []struct{ id, want string }{
-		{"ahead", "↑2"},
-		{"behind", "↓3"},
-		{"both", "↑1 ↓4"},
+		{"ahead", "❨↑2❩"},
+		{"behind", "❨↓3❩"},
+		{"both", "❨↑1 ↓4❩"},
 		{"level", ""},
 		{"unknown", ""},
 	} {

@@ -230,6 +230,18 @@ func pill(text string, fg lipgloss.Color) string {
 	return chipStyle.Foreground(fg).Render(text)
 }
 
+// roundPill renders a chip inside rounded ornaments instead of on a fill.
+//
+// What a row says about a pull request, or about how far its checkout has
+// drifted, is news from somewhere else — GitHub, or a remote — where the tool
+// and branch beside it are facts about the session itself. A light bracket
+// keeps the two classes apart at a glance without a second colour, and the
+// ornaments are ordinary Unicode rather than a patched font's private range.
+func roundPill(text string, fg lipgloss.Color) string {
+	edge := lipgloss.NewStyle().Foreground(colorSubtle)
+	return edge.Render("❨") + lipgloss.NewStyle().Foreground(fg).Render(text) + edge.Render("❩")
+}
+
 // keyPill renders a chip with the key that changes it dimmed in front, so
 // the header doubles as a key legend: each changeable value wears its
 // shortcut. The key is dim enough to lose to the value at a glance but
