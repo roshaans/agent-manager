@@ -35,13 +35,6 @@ const prFields = "number,url,title,isDraft,state,headRefName,baseRefName"
 func (pr pullRequest) open() bool { return pr.State == "" || pr.State == "OPEN" }
 
 const (
-	// prScanInterval is how often the badges are re-read. A pull request
-	// opened elsewhere is worth showing within the minute; asking any harder
-	// than that spends a reader's API budget on a number that rarely moves.
-	prScanInterval = time.Minute
-	// prScanFirstDelay lets the first poll fill the session list before the
-	// first scan reads it, so startup does not spend a pass on no rows.
-	prScanFirstDelay = 3 * time.Second
 	// prScanTimeout bounds a whole pass. A pass that hangs is one that would
 	// otherwise hold its repositories' listings until the manager quits.
 	prScanTimeout = 30 * time.Second
@@ -61,6 +54,18 @@ const (
 	prSourceObserved = "observed"
 )
 
+// prScanInterval is how often the badges are re-read. A pull request opened
+// elsewhere is worth showing within the minute; asking any harder than that
+// spends a reader's API budget on a number that rarely moves.
+//
+// prScanFirstDelay lets the first poll fill the session list before the first
+// scan reads it, so startup does not spend a pass on no rows. A variable so a
+// test can arm them without waiting the real delays out.
+var (
+	prScanInterval   = time.Minute
+	prScanFirstDelay = 3 * time.Second
+)
+
 type prScanTickMsg struct{}
 
 // prScanMsg carries a finished pass: each session's pull requests, and the
@@ -69,6 +74,10 @@ type prScanTickMsg struct{}
 type prScanMsg struct {
 	prs   map[string][]pullRequest
 	links map[string]string
+	// ran reports that the pass actually reached the host. A pass that could
+	// not is not evidence that a session has no pull request, and must not be
+	// allowed to clear what an earlier one established.
+	ran bool
 }
 
 func (m *Model) prScanTick() tea.Cmd {
@@ -106,8 +115,8 @@ func (m *Model) prScanCmd() tea.Cmd {
 	}
 	drv, capture := m.gitDrv, m.paneHistory
 	return func() tea.Msg {
-		prs, links := scanPullRequests(drv, capture, targets)
-		return prScanMsg{prs: prs, links: links}
+		prs, links, ran := scanPullRequests(drv, capture, targets)
+		return prScanMsg{prs: prs, links: links, ran: ran}
 	}
 }
 
@@ -151,9 +160,9 @@ type prPlace struct{ root, branch, head, repoURL string }
 // with six worktrees under six sessions costs one request and not six. That
 // is the whole reason the badge reads a repository's open pull requests
 // instead of asking after each branch in turn.
-func scanPullRequests(drv *git.Driver, capture func(string) string, targets []prScanTarget) (map[string][]pullRequest, map[string]string) {
+func scanPullRequests(drv *git.Driver, capture func(string) string, targets []prScanTarget) (map[string][]pullRequest, map[string]string, bool) {
 	if _, err := lookPath("gh"); err != nil {
-		return nil, nil
+		return nil, nil, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), prScanTimeout)
 	defer cancel()
@@ -215,9 +224,7 @@ func scanPullRequests(drv *git.Driver, capture func(string) string, targets []pr
 			printed, links[target.sessID] = seen, seen
 		}
 		if created != "" {
-			if pr, ok := lookupPR(ctx, place.root, created, listing, viewed); ok {
-				add(pr)
-			}
+			add(resolveRecorded(ctx, place.root, created, listing, viewed))
 		}
 
 		slug := prRepoSlug(place.repoURL)
@@ -244,15 +251,15 @@ func scanPullRequests(drv *git.Driver, capture func(string) string, targets []pr
 		}
 
 		if printed != "" {
-			if pr, ok := lookupPR(ctx, place.root, printed, listing, viewed); ok {
-				add(pr)
-			}
+			add(resolveRecorded(ctx, place.root, printed, listing, viewed))
 		}
 		if len(prs) > 0 {
 			found[target.sessID] = prs
 		}
 	}
-	return found, links
+	// A pass cut short by its own deadline has read some repositories and not
+	// others, and the ones it missed look empty rather than unread.
+	return found, links, ctx.Err() == nil
 }
 
 // allowedRepos is which repositories an address printed in a session may name
@@ -266,6 +273,25 @@ func allowedRepos(repoURL string, listing []pullRequest) []string {
 		}
 	}
 	return allowed
+}
+
+// resolveRecorded is a recorded address turned back into a pull request, in
+// as much detail as can be had.
+//
+// A link that was recorded is a fact about this session, and stays one when
+// the host cannot be reached to say more about it — offline, rate limited,
+// signed out, or behind a gh that has no credentials in this environment.
+// The number lives in the address itself, so the badge still answers and P
+// still opens the right page; only the title and the draft mark are missing
+// until a later pass can fetch them.
+//
+// A pull request that gh *can* answer for and reports as merged is a
+// different thing: that is known, not unknown, and the caller drops it.
+func resolveRecorded(ctx context.Context, root, prURL string, listing []pullRequest, viewed map[string]pullRequest) pullRequest {
+	if pr, ok := lookupPR(ctx, root, prURL, listing, viewed); ok {
+		return pr
+	}
+	return pullRequest{URL: prURL, Number: prNumberOf(prURL)}
 }
 
 // lookupPR is a recorded address turned back into a pull request: from the

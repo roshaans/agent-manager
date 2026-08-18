@@ -7,9 +7,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/YoanWai/agent-manager/internal/git"
 	"github.com/YoanWai/agent-manager/internal/store"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func scanDriver(t *testing.T) *git.Driver {
@@ -32,7 +34,7 @@ func TestScanMatchesTheBranchOnly(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:owner/repo.git")
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if len(found["s1"]) != 1 || found["s1"][0].Number != 1 {
 		t.Fatalf("scan found %v, want only the pull request on this branch", found["s1"])
@@ -51,7 +53,7 @@ func TestScanListsARemoteOnce(t *testing.T) {
 	worktree := filepath.Join(t.TempDir(), "wt")
 	gitAt(t, repo, "worktree", "add", "-b", "am/side", worktree)
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo},
 		{sessID: "s2", dir: repo},
 		{sessID: "s3", dir: worktree},
@@ -92,7 +94,7 @@ func TestScanListsTheRemoteAndWhatGHResolves(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if want := []string{"https://github.com/me/fork", ""}; !slices.Equal(asked, want) {
 		t.Fatalf("listed %v, want the remote first and gh's own resolution second", asked)
@@ -127,7 +129,7 @@ func TestScanSkipsWhatCannotHaveAPullRequest(t *testing.T) {
 	loose := t.TempDir()
 	unpublished := seedRepo(t)
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: loose},
 		{sessID: "s2", dir: unpublished},
 	})
@@ -150,7 +152,7 @@ func TestScanWithoutTheCLI(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:owner/repo.git")
 
-	if found, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}}); found != nil {
+	if found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}}); found != nil {
 		t.Fatalf("scan found %v without gh, want nothing", found)
 	}
 }
@@ -242,7 +244,7 @@ func TestScanFindsAPullRequestByCommit(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if len(found["s1"]) != 1 || found["s1"][0].Number != 5 {
 		t.Fatalf("found %v, want the pull request the commit is in", found["s1"])
@@ -295,7 +297,7 @@ func TestScanOrdersCreatedThenCommitThenBranch(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo, prURL: recorded.URL, prSource: prSourceCreated},
 	})
 
@@ -326,7 +328,7 @@ func TestScanRanksAPrintedAddressBehindTheCommit(t *testing.T) {
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 	pane := func(string) string { return "have a look at " + theirs.URL }
 
-	found, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if len(found["s1"]) == 0 || found["s1"][0].Number != 9 {
 		t.Fatalf("found %v, want the commit's own pull request leading", found["s1"])
@@ -342,4 +344,185 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v: %v", args, err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// A pass that never reached the host says nothing about which pull requests
+// exist. Clearing the badges on it would blank every row for a minute
+// whenever the network hiccups or gh is briefly unavailable.
+func TestFailedPassKeepsTheBadgesOnScreen(t *testing.T) {
+	m := buildModel(t)
+	kept := map[string][]pullRequest{"s1": {{Number: 7}}}
+	m.prs = kept
+
+	updated, _ := m.Update(prScanMsg{prs: nil, ran: false})
+	*m = *updated.(*Model)
+
+	if len(m.prs["s1"]) != 1 {
+		t.Fatalf("a pass that never ran cleared the badges: %v", m.prs)
+	}
+
+	// A pass that did run and found nothing is evidence, and does clear.
+	updated, _ = m.Update(prScanMsg{prs: map[string][]pullRequest{}, ran: true})
+	*m = *updated.(*Model)
+
+	if len(m.prs["s1"]) != 0 {
+		t.Fatalf("a pass that ran should have cleared: %v", m.prs)
+	}
+}
+
+// Without gh the pass cannot have run, whatever it returns.
+func TestScanWithoutTheCLIDidNotRun(t *testing.T) {
+	drv := scanDriver(t)
+	prev := lookPath
+	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(func() { lookPath = prev })
+
+	if _, _, ran := scanPullRequests(drv, noPane, []prScanTarget{{sessID: "s1", dir: t.TempDir()}}); ran {
+		t.Fatal("a pass without gh reported that it ran")
+	}
+}
+
+// A link already recorded is a fact about the session. A host that cannot be
+// reached — offline, rate limited, or a gh with no credentials in this
+// environment — leaves the title and draft mark unknown, not the pull
+// request. The number is in the address, so the badge still answers.
+func TestRecordedLinkBadgesWithoutTheHost(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	prev, prevView := ghListRun, viewPullRequest
+	ghListRun = func(context.Context, string, string) []pullRequest { return nil }
+	viewPullRequest = func(context.Context, string, string) pullRequest { return pullRequest{} }
+	prevCommit := commitPullRequests
+	commitPullRequests = func(context.Context, string, string, string) []pullRequest { return nil }
+	t.Cleanup(func() { ghListRun, viewPullRequest, commitPullRequests = prev, prevView, prevCommit })
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/42", prSource: prSourceCreated},
+	})
+
+	if len(found["s1"]) != 1 || found["s1"][0].Number != 42 {
+		t.Fatalf("found %v, want the recorded number from the address alone", found["s1"])
+	}
+	if m := (&Model{prs: found}).prChip(store.Session{ID: "s1"}); !strings.Contains(m, "#42") {
+		t.Fatalf("chip = %q, want it to carry the number", m)
+	}
+}
+
+// A pull request gh can answer for and reports as merged is known, not
+// unknown, so it still stops wearing a badge.
+func TestRecordedLinkStillDropsWhenKnownMerged(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	prev, prevView := ghListRun, viewPullRequest
+	ghListRun = func(context.Context, string, string) []pullRequest { return nil }
+	viewPullRequest = func(_ context.Context, _, prURL string) pullRequest {
+		return pullRequest{Number: 42, URL: prURL, State: "MERGED"}
+	}
+	prevCommit := commitPullRequests
+	commitPullRequests = func(context.Context, string, string, string) []pullRequest { return nil }
+	t.Cleanup(func() { ghListRun, viewPullRequest, commitPullRequests = prev, prevView, prevCommit })
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
+		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/42", prSource: prSourceCreated},
+	})
+
+	if len(found) != 0 {
+		t.Fatalf("found %v, want a merged pull request dropped", found)
+	}
+}
+
+// The wiring, which every other test here skips past: a tick has to actually
+// produce a pass, and schedule the next one. A feature that silently never
+// runs would satisfy every test of scanPullRequests on its own.
+func TestScanTickRunsAPassAndSchedulesTheNext(t *testing.T) {
+	prevInterval := prScanInterval
+	prScanInterval = time.Millisecond
+	t.Cleanup(func() { prScanInterval = prevInterval })
+	m := buildModel(t)
+	pretendGH(t)
+	captureListing(t, pullRequest{Number: 5, URL: "u/5", Head: "main", State: "OPEN"})
+	prev := commitPullRequests
+	commitPullRequests = func(context.Context, string, string, string) []pullRequest { return nil }
+	t.Cleanup(func() { commitPullRequests = prev })
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+	createSession(t, m, "agent", repo, "")
+
+	updated, cmd := m.Update(prScanTickMsg{})
+	*m = *updated.(*Model)
+	if cmd == nil {
+		t.Fatal("a tick produced no work at all")
+	}
+	// The pass and the next tick both come back from the one batch.
+	var scanned *prScanMsg
+	for _, sub := range cmd().(tea.BatchMsg) {
+		if msg, ok := sub().(prScanMsg); ok {
+			scanned = &msg
+		}
+	}
+	if scanned == nil {
+		t.Fatal("the tick scheduled no scan")
+	}
+	if !scanned.ran {
+		t.Fatal("the pass reported that it never ran")
+	}
+	if len(scanned.prs) != 1 {
+		t.Fatalf("the pass found %v, want the session's pull request", scanned.prs)
+	}
+
+	// And the result reaches the badge.
+	updated, _ = m.Update(*scanned)
+	*m = *updated.(*Model)
+	if chip := m.prChip(m.sessionRows()[0]); !strings.Contains(chip, "#5") {
+		t.Fatalf("chip = %q, want the number the pass found", chip)
+	}
+}
+
+// The first pass is armed at startup, or the badges only ever appear a minute
+// after the manager opens. Init's batch cannot simply be walked: it holds
+// ticks measured in hours, and running one waits it out.
+func TestInitArmsTheFirstPass(t *testing.T) {
+	prevDelay := prScanFirstDelay
+	prScanFirstDelay = time.Millisecond
+	t.Cleanup(func() { prScanFirstDelay = prevDelay })
+	m := buildModel(t)
+
+	batch, ok := m.Init()().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("Init did not return a batch")
+	}
+	if !armsWithin(batch, time.Second, prScanTickMsg{}) {
+		t.Fatal("Init never arms the pull request scan")
+	}
+}
+
+// armsWithin runs a batch's commands concurrently and reports whether any of
+// them produces want before the deadline. The slow ones are simply never
+// waited on, which is the whole point.
+func armsWithin(batch tea.BatchMsg, within time.Duration, want tea.Msg) bool {
+	seen := make(chan tea.Msg, len(batch))
+	for _, cmd := range batch {
+		if cmd == nil {
+			continue
+		}
+		go func(cmd tea.Cmd) {
+			defer func() { recover() }()
+			seen <- cmd()
+		}(cmd)
+	}
+	deadline := time.After(within)
+	for {
+		select {
+		case msg := <-seen:
+			if msg == want {
+				return true
+			}
+		case <-deadline:
+			return false
+		}
+	}
 }

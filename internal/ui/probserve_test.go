@@ -89,7 +89,7 @@ func TestScanFindsAPullRequestOffTheSessionsBranch(t *testing.T) {
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 	pane := func(string) string { return "PR created: https://github.com/me/fork/pull/2" }
 
-	found, links := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, links, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if len(found["s1"]) != 1 || found["s1"][0].Number != 2 {
 		t.Fatalf("found %v, want the pull request the session printed", found["s1"])
@@ -115,7 +115,7 @@ func TestScanKeepsARecordedLinkAfterItScrollsAway(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, links := scanPullRequests(drv, noPane, []prScanTarget{
+	found, links, _ := scanPullRequests(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo, prURL: recorded, prSource: prSourceCreated},
 	})
 
@@ -142,7 +142,7 @@ func TestScanDropsAMergedRecordedLink(t *testing.T) {
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 
-	found, _ := scanPullRequests(drv, noPane, []prScanTarget{
+	found, _, _ := scanPullRequests(drv, noPane, []prScanTarget{
 		{sessID: "s1", dir: repo, prURL: "https://github.com/me/fork/pull/2", prSource: prSourceCreated},
 	})
 
@@ -169,7 +169,7 @@ func TestScanKeepsTheBranchPullRequestBesideThePrintedOne(t *testing.T) {
 	remoteAt(t, repo, "git@github.com:me/fork.git")
 	pane := func(string) string { return "PR created: " + elsewhere.URL }
 
-	found, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
+	found, _, _ := scanPullRequests(drv, pane, []prScanTarget{{sessID: "s1", dir: repo}})
 
 	if len(found["s1"]) != 2 {
 		t.Fatalf("found %v, want both", found["s1"])

@@ -1110,7 +1110,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.prScanCmd(), m.prScanTick())
 
 	case prScanMsg:
-		m.prs = msg.prs
+		// A pass that never reached the host says nothing about which pull
+		// requests exist, so what is on screen stays on screen.
+		if msg.ran {
+			m.prs = msg.prs
+		}
 		// A link is written back so it survives the manager quitting: what a
 		// session printed scrolls out of its pane long before the work it
 		// names is finished with.
