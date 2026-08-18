@@ -533,10 +533,14 @@ func (m *Model) prChip(sess store.Session) string {
 	if extra := len(prs) - 1; extra > 0 {
 		label += "+" + strconv.Itoa(extra)
 	}
+	// A draft recedes to the fill every other chip sits on, where an open
+	// pull request gets the lifted one. Dimming the text instead would put
+	// subtle on a lifted background, which in half these themes is a chip
+	// nobody can read — the ✎ carries "draft" well enough on its own.
 	if pr.IsDraft {
-		return roundPill(label, colorSubtle)
+		return pill(label, colorBright)
 	}
-	return roundPill(label, colorAccent2)
+	return shadedPill(label, colorBright)
 }
 
 // fetchRemote is the seam tests swap, so a pass under test never reaches a

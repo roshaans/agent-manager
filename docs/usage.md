@@ -126,7 +126,7 @@ lazygit has to be on `PATH` — nothing is configurable here, and the status lin
 
 ## Pull requests
 
-A session with an open pull request wears its number: `❨#328❩` beside the name, dimmed and marked `✎` while the pull request is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
+A session with an open pull request wears its number: `#328` beside the name on a chip of its own shade, and marked `✎` on the plain chip while it is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
 
 `P` on a session with **no** pull request offers to open one: `↵` pushes the branch and creates it, titled from its commits, in the repository the branch was pushed to. `r` opens the repository page, which is what `P` used to do here on its own. Creating it this way is the only moment the link between a session and its pull request is a fact rather than a reading — everything below is working out after the event what this knows at it.
 
@@ -153,7 +153,7 @@ A session whose checkout has drifted from its remote branch says so beside its n
 
 A branch with no upstream shows nothing at all. "In step" and "nothing to compare against" are different answers, and a `↑0 ↓0` would report the second as the first.
 
-Both this and the pull request number sit in rounded brackets rather than on the filled chips beside them: the tool and branch describe the session itself, where these two are news from a remote, and the shape says which is which without a second colour.
+The brackets are what tell this apart from the chips beside it: the tool, the branch and the pull request are all things that exist somewhere, where this is a comparison between two of them and belongs to neither.
 
 This rides the same once-a-minute pass as the [pull request](#pull-requests) badge. Ahead comes out of git alone, so it works with no network and with no `gh` installed. Behind is only as fresh as the last fetch, so the pass fetches — once per repository rather than once per session, since several worktrees of one repository all have the same answer. The fetch moves remote-tracking refs and nothing else: no local branch, no index, nothing in the working tree, and `FETCH_HEAD` is deliberately left alone, since that is a file an agent may be reading for its own purposes.
 
