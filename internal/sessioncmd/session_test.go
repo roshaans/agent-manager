@@ -362,3 +362,59 @@ func seedSessionRepo(t *testing.T) string {
 	}
 	return dir
 }
+
+// A session created from inside a worktree is a fork without the context: it
+// joins the caller's worktree — even when the group default would branch a
+// new one — and only an explicit worktree request gets its own.
+func TestCreateSessionInsideAWorktreeJoinsItLikeAFork(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	h := newSessionHarness(t)
+	repo := seedSessionRepo(t)
+	if err := h.store.CreateGroup("repos", repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetGroupWorktree("repos", "on"); err != nil {
+		t.Fatal(err)
+	}
+	group := "repos"
+	on := true
+	outer, err := h.sessions.Create(h.caller.ID, CreateSessionOptions{
+		Prompt: "own the feature", Group: &group, Name: "wt-outer", Worktree: &on,
+	})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if outer.Branch == "" {
+		t.Fatalf("owner did not get a worktree: %+v", outer)
+	}
+
+	joined, err := h.sessions.Create(outer.ID, CreateSessionOptions{Prompt: "second opinion"})
+	if err != nil {
+		t.Fatalf("create joined: %v", err)
+	}
+	if joined.Branch != outer.Branch || !sameTerminalPath(joined.Directory, outer.Directory) {
+		t.Fatalf("joined = %+v, want the caller's worktree %+v", joined, outer)
+	}
+	stored, err := h.store.Get(joined.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.WorktreeRepo == "" || stored.WorktreeBranch != outer.Branch {
+		t.Fatalf("joined row is not counted by worktree cleanup: %+v", stored)
+	}
+
+	isolated, err := h.sessions.Create(outer.ID, CreateSessionOptions{
+		Prompt: "isolated work", Name: "wt-inner", Worktree: &on,
+	})
+	if err != nil {
+		t.Fatalf("create isolated: %v", err)
+	}
+	if isolated.Branch == outer.Branch || sameTerminalPath(isolated.Directory, outer.Directory) {
+		t.Fatalf("explicit worktree still joined the caller: %+v", isolated)
+	}
+	if strings.HasPrefix(isolated.Directory, outer.Directory) {
+		t.Fatalf("isolated worktree %q nests under the caller's %q", isolated.Directory, outer.Directory)
+	}
+}

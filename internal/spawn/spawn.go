@@ -78,6 +78,11 @@ type Options struct {
 	// records the session it was opened for.
 	ParentID string
 	Worktree bool
+	// WorktreeRepo and WorktreeBranch attach the session to a worktree that
+	// already exists, the way a fork shares its source's, so the last session
+	// to leave still cleans the worktree up. Ignored when Worktree asks for a
+	// new one.
+	WorktreeRepo, WorktreeBranch string
 }
 
 // Result is the created session and what the caller still has to decide about
@@ -143,7 +148,7 @@ func (s *Spawner) Create(opts Options) (Result, error) {
 
 	id := NewID()
 	dir := opts.Directory
-	worktreeRepo, worktreeBranch := "", ""
+	worktreeRepo, worktreeBranch := opts.WorktreeRepo, opts.WorktreeBranch
 	if opts.Worktree {
 		if s.git == nil {
 			return Result{}, errors.New("worktree sessions need git installed")
@@ -221,7 +226,7 @@ func (s *Spawner) Create(opts Options) (Result, error) {
 		ParentID:       opts.ParentID,
 		PendingInputs:  pendingInputs,
 	}, tool, base, LaunchOptions{
-		RollbackWorktree: worktreeRepo != "",
+		RollbackWorktree: opts.Worktree,
 		Env:              launchEnv,
 		Setup:            setup,
 		SetupMarker:      marker,

@@ -53,7 +53,8 @@ type CreateSessionOptions struct {
 	// string deliberately targets the root group.
 	Group     *string
 	Directory string
-	// Worktree nil follows the target group's setting. An explicit true in a
+	// Worktree nil joins the caller's worktree when the session opens inside
+	// one, else follows the target group's setting. An explicit true in a
 	// directory that is not a repository is refused rather than quietly
 	// downgraded: an agent that asked for isolation and did not get it would
 	// work in the shared checkout believing otherwise.
@@ -103,15 +104,24 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 	// A missing git binary only rules out worktrees; everything else about a
 	// session works without it, so the failure surfaces at the request for one.
 	gitDriver, _ := git.New()
-	worktree, err := runtime.resolveWorktree(opts.Worktree, groups, group, dir, gitDriver)
-	if err != nil {
-		return Session{}, err
+	// A chat opened inside the caller's own worktree is a fork without the
+	// context: it joins that worktree rather than getting one of its own, so
+	// the last session to leave still cleans it up. A new worktree is only
+	// made when asked for, or when the group default says so and there is
+	// nothing to join.
+	join := caller.WorktreeRepo != "" && pathWithin(dir, caller.Cwd)
+	worktree := false
+	switch {
+	case opts.Worktree != nil:
+		worktree = *opts.Worktree
+	case !join:
+		worktree, err = runtime.worktreeDefault(groups, group, dir, gitDriver)
+		if err != nil {
+			return Session{}, err
+		}
 	}
 
-	runtime.driver.AdoptServerPaneTheme()
-	spawner := spawn.New(runtime.cfg, runtime.store, runtime.driver,
-		hooks.NewManager(s.configDir), gitDriver, nil)
-	result, err := spawner.Create(spawn.Options{
+	create := spawn.Options{
 		Tool:      tool,
 		Name:      opts.Name,
 		Group:     group,
@@ -121,7 +131,19 @@ func (s *Sessions) Create(sessionID string, opts CreateSessionOptions) (Session,
 		// records the session it was opened for.
 		ParentID: caller.ID,
 		Worktree: worktree,
-	})
+	}
+	if join && !worktree {
+		// The fork triple: the chat opens at the worktree root and carries
+		// its repo and branch, so the refcount counts it.
+		create.Directory = caller.Cwd
+		create.WorktreeRepo = caller.WorktreeRepo
+		create.WorktreeBranch = caller.WorktreeBranch
+	}
+
+	runtime.driver.AdoptServerPaneTheme()
+	spawner := spawn.New(runtime.cfg, runtime.store, runtime.driver,
+		hooks.NewManager(s.configDir), gitDriver, nil)
+	result, err := spawner.Create(create)
 	if err != nil {
 		return Session{}, err
 	}
@@ -166,15 +188,10 @@ func (r *runtime) resolveTool(named string) (string, error) {
 	return tool, nil
 }
 
-// resolveWorktree answers whether the new session gets its own worktree. An
-// explicit choice passes through — spawn refuses a true it cannot honour —
-// while the inherited default only applies where a worktree is possible, the
-// way the manager's own toggle greys itself out in a directory that is not a
-// repository.
-func (r *runtime) resolveWorktree(want *bool, groups []store.Group, group, dir string, gitDriver *git.Driver) (bool, error) {
-	if want != nil {
-		return *want, nil
-	}
+// worktreeDefault is the inherited spawn-in-worktree choice, applying only
+// where a worktree is possible, the way the manager's own toggle greys
+// itself out in a directory that is not a repository.
+func (r *runtime) worktreeDefault(groups []store.Group, group, dir string, gitDriver *git.Driver) (bool, error) {
 	if gitDriver == nil {
 		return false, nil
 	}

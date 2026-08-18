@@ -38,7 +38,7 @@ type createSessionArgs struct {
 	Tool      string  `json:"tool,omitempty" jsonschema:"agent CLI to launch, such as claude or codex; defaults to the manager's configured default"`
 	Group     *string `json:"group,omitempty" jsonschema:"existing group path for the new session; pass an empty string for the root group; defaults to this agent's group"`
 	Directory string  `json:"directory,omitempty" jsonschema:"existing directory to work in; defaults to this agent's current directory, or to the group's inherited path when group is passed"`
-	Worktree  *bool   `json:"worktree,omitempty" jsonschema:"give the session its own git worktree and branch so its edits cannot collide with yours; defaults to the target group's setting"`
+	Worktree  *bool   `json:"worktree,omitempty" jsonschema:"give the session its own git worktree and branch so its edits cannot collide with yours; omitted, a session created inside your worktree joins it as a fresh chat, and the group's setting decides elsewhere"`
 }
 
 type listTerminalsArgs struct{}
@@ -84,7 +84,7 @@ Before starting a long-running, output-heavy, or continuously monitored command 
 
 Do not create a new terminal for every short one-shot command when persistence or separate visibility adds no value. Sending a terminal command executes on the user's machine and follows the same safety and approval expectations as normal shell execution.
 
-Use create_session when work should run beside this conversation as its own agent session, with its own history, worktree and review: a task the user asked to split off, or a piece of work large enough to be followed on its own. The new session begins on the prompt you give it immediately and works on its own, so the prompt has to carry everything it needs to start. Give it a worktree when its edits would otherwise collide with yours.`
+Use create_session when work should run beside this conversation as its own agent session, with its own history and review: a task the user asked to split off, or a piece of work large enough to be followed on its own. The new session begins on the prompt you give it immediately and works on its own, so the prompt has to carry everything it needs to start. Called from inside a worktree it joins your worktree by default; give it a worktree of its own when its edits would otherwise collide with yours.`
 
 // NewServer builds the MCP server with every session tool registered.
 // Split from Run so tests can connect an in-process client.
@@ -149,11 +149,12 @@ func newServer(configDir, sessionID, version string, terminals terminalCommands,
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "create_session",
 		Description: "Create a new agent session in Agent Manager, working on the prompt you give it. " +
-			"Use it when work should run beside yours with its own history, worktree and review: a task the user asked " +
+			"Use it when work should run beside yours with its own history and review: a task the user asked " +
 			"to split off, or a piece of work large enough to be followed on its own. " +
 			"The new session starts on the prompt immediately, so give it everything it needs to begin. " +
-			"Opens by default in this agent's group and current directory, launching the manager's default CLI. " +
-			"Set worktree to give it its own git worktree and branch so its edits cannot collide with yours.",
+			"Opens by default in this agent's group and current directory — called from inside a worktree, the new " +
+			"session joins it, a fork of your workspace without your conversation. " +
+			"Set worktree to give it its own git worktree and branch instead, so its edits cannot collide with yours.",
 		Annotations: toolAnnotations(false, false, true),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args createSessionArgs) (*mcp.CallToolResult, sessioncmd.Session, error) {
 		created, err := sessions.Create(sessionID, sessioncmd.CreateSessionOptions{

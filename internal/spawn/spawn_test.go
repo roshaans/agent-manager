@@ -424,3 +424,46 @@ func TestCreateWorktreeFromInsideAWorktreeHangsOffTheMainRepo(t *testing.T) {
 		t.Fatalf("inner worktree %q nests under the caller's %q", second.Session.Cwd, first.Session.Cwd)
 	}
 }
+
+// Attaching is the fork model without the conversation: the session carries
+// the worktree's repo and branch so cleanup counts it, but a failed launch
+// must not take the shared tree with it — only a worktree made here rolls back.
+func TestCreateAttachesToAWorktreeWithoutOwningIt(t *testing.T) {
+	s := newSpawner(t)
+	repo := seedRepo(t)
+	outer, err := s.Create(Options{Tool: "claude", Name: "wt-owner", Directory: repo, Worktree: true})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	attach := Options{
+		Tool: "claude", Name: "second-chat", Directory: outer.Session.Cwd,
+		WorktreeRepo: outer.Session.WorktreeRepo, WorktreeBranch: outer.Session.WorktreeBranch,
+	}
+	joined, err := s.Create(attach)
+	if err != nil {
+		t.Fatalf("create attached: %v", err)
+	}
+	if joined.Session.WorktreeRepo != outer.Session.WorktreeRepo ||
+		joined.Session.WorktreeBranch != outer.Session.WorktreeBranch ||
+		joined.Session.Cwd != outer.Session.Cwd {
+		t.Fatalf("attached = %+v, want the owner's worktree triple %+v", joined.Session, outer.Session)
+	}
+
+	hooksDir := s.hooks.Dir()
+	// The earlier creates left the MCP config in place and an unchanged file
+	// is not rewritten, so it has to go for the unwritable directory to bite.
+	if err := os.Remove(filepath.Join(hooksDir, "mcp-claude.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(hooksDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hooksDir, 0o755) })
+	attach.Name = "failed-chat"
+	if _, err := s.Create(attach); err == nil {
+		t.Fatal("launch-build failure must block the spawn")
+	}
+	if _, err := os.Stat(outer.Session.Cwd); err != nil {
+		t.Fatalf("a failed attach removed the shared worktree: %v", err)
+	}
+}
