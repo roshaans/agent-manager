@@ -583,8 +583,7 @@ func TestScanCountsAheadAndBehind(t *testing.T) {
 	repo := seedRepo(t)
 	remote := pushTo(t, repo)
 	// A second clone stands in for whoever else pushed.
-	other := filepath.Join(t.TempDir(), "other")
-	gitAt(t, repo, "clone", "--quiet", remote, other)
+	other := cloneRepo(t, remote)
 	writeCommit(t, other, "theirs.txt", "theirs")
 	gitAt(t, other, "push", "--quiet", "origin", "main")
 	// And this checkout has work of its own that never left.
@@ -668,6 +667,22 @@ func TestSyncChip(t *testing.T) {
 			t.Errorf("chip for %s = %q, want %q", tc.id, strings.TrimSpace(got), tc.want)
 		}
 	}
+}
+
+// cloneRepo clones a repository and gives the clone an identity of its own.
+//
+// A clone inherits none of its source's local config, and a build sandbox
+// will not invent one: a machine with a real user and hostname quietly auto
+// detects an author where nixbld@localhost.(none) is refused outright. A test
+// that commits in a clone has to say who is committing, or it passes here and
+// fails where it matters.
+func cloneRepo(t *testing.T, remote string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "clone")
+	gitAt(t, t.TempDir(), "clone", "--quiet", remote, dir)
+	gitAt(t, dir, "config", "user.email", "test@test")
+	gitAt(t, dir, "config", "user.name", "test")
+	return dir
 }
 
 func writeCommit(t *testing.T, dir, name, body string) {
