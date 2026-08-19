@@ -80,7 +80,7 @@ func helpSections() []helpSection {
 			{".", "mark it idle when it is finished, without entering it"},
 			{"space", "quick prompt: answer the session without attaching"},
 			{"ctrl+r", "review its diff"},
-			{"f", "fork it into a new session in the same group"},
+			{"f", "fork it into a new session (alt+w: share its directory)"},
 			{"r", "rename it, and re-pick its tool"},
 			{"m", "move it to another group"},
 			{"o", "open its working directory in your editor"},

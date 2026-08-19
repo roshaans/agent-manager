@@ -21,7 +21,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
 | `Y` | Copy the selected row's directory to the clipboard: a session's checkout — its worktree, when it has one — or a group's default path |
 | `i` | The rules the selected session runs under: the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` its tool reads, read in place or opened in your editor ([Agent rules](#agent-rules)) |
-| `f` | Fork the selected conversation into a named session in the same group and directory |
+| `f` | Fork the selected conversation into a named session in the same group. A fork of a worktree session gets a worktree of its own, branched from where its source is, so two agents never write to one checkout; `alt+w` shares the source's directory instead |
 | `g` | New group (name, parent, default path) |
 | `enter` | Focus session in place (keys go to the agent, list stays) / fold group |
 | `A` | Attach session full screen (Settings can swap it with `enter`) |

@@ -706,7 +706,15 @@ func worktreePlacement(root, name string) (string, string) {
 	return filepath.Join(filepath.Dir(root), filepath.Base(root)+"-worktrees", name), "am/" + name
 }
 
+// AddWorktree cuts a worktree from the repository's own base.
 func (d *Driver) AddWorktree(root, sessionName string) (string, string, error) {
+	return d.AddWorktreeFrom(root, sessionName, "")
+}
+
+// AddWorktreeFrom cuts one from a named ref instead, for work that continues
+// from somewhere other than the base — a fork carrying on from the commits
+// its source has already made.
+func (d *Driver) AddWorktreeFrom(root, sessionName, from string) (string, string, error) {
 	name := sanitizeWorktreeName(sessionName)
 	if name == "" {
 		return "", "", fmt.Errorf("session name %q leaves nothing usable for a worktree directory", sessionName)
@@ -715,7 +723,10 @@ func (d *Driver) AddWorktree(root, sessionName string) (string, string, error) {
 	if _, err := os.Stat(path); err == nil {
 		return "", "", fmt.Errorf("worktree path already exists: %s", path)
 	}
-	base := d.worktreeBase(root)
+	base := from
+	if base == "" {
+		base = d.worktreeBase(root)
+	}
 	if base == "" {
 		return "", "", fmt.Errorf("no base ref for a worktree in %s: repository has no commits", root)
 	}
