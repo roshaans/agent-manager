@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -26,6 +28,25 @@ type pullRequest struct {
 	// Checks is every check and legacy commit status on the head commit,
 	// which the listing hands over at no extra call.
 	Checks []checkRun `json:"statusCheckRollup"`
+	// Mergeable is MERGEABLE, CONFLICTING, or UNKNOWN while GitHub is still
+	// working it out. Size is what the pull request does to the tree.
+	Mergeable    string `json:"mergeable"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
+	ChangedFiles int    `json:"changedFiles"`
+}
+
+// conflicting reports a pull request git cannot merge as it stands. UNKNOWN
+// is not it: GitHub computes mergeability on demand and says so while it
+// works, and a marker that flickers on every pass is worse than none.
+func (pr pullRequest) conflicting() bool { return pr.Mergeable == "CONFLICTING" }
+
+// size is what the pull request changes, for the places with room to say it.
+func (pr pullRequest) size() string {
+	if pr.Additions == 0 && pr.Deletions == 0 && pr.ChangedFiles == 0 {
+		return ""
+	}
+	return fmt.Sprintf("+%d −%d", pr.Additions, pr.Deletions)
 }
 
 // checkRun is one entry of that rollup. A check run reports a status and,
@@ -83,7 +104,8 @@ func (pr pullRequest) checks() checksState {
 
 // prFields is what both the listing and a single lookup ask gh for, kept in
 // one place so a badge reads the same whichever of the two found it.
-const prFields = "number,url,title,isDraft,state,headRefName,baseRefName,statusCheckRollup"
+const prFields = "number,url,title,isDraft,state,headRefName,baseRefName,statusCheckRollup," +
+	"mergeable,additions,deletions,changedFiles"
 
 // open reports whether a pull request is still in flight. A listing only ever
 // carries open ones; a pull request found by its recorded address can be any
@@ -106,6 +128,9 @@ const (
 	// reads as ahead-of-upstream — which is a thing this badge does not say,
 	// and a thing a later badge may well want to.
 	prDraftMark = "✎"
+	// prConflictMark rides after the number on a pull request git cannot
+	// merge as it stands.
+	prConflictMark = "⚠"
 )
 
 // How a recorded link was arrived at, which decides whether it leads or
@@ -246,6 +271,11 @@ func scanSessions(drv *git.Driver, capture func(string) string, targets []prScan
 
 	places := map[string]prPlace{}
 	listings := map[string][]pullRequest{}
+	// Whether GitHub answered at all this pass. Every listing failing is not
+	// evidence that these sessions have no pull requests — it is the host
+	// being down, the token being stale, or the rate limit being spent — and
+	// clearing the badges on it would blank the list until it comes back.
+	asked, answered := 0, 0
 	viewed := map[string]pullRequest{}
 	commits := map[string][]pullRequest{}
 	fetched := map[string]bool{}
@@ -271,7 +301,7 @@ func scanSessions(drv *git.Driver, capture func(string) string, targets []prScan
 		} else {
 			if !fetched[place.root] {
 				fetched[place.root] = true
-				fetchRemote(drv, place.root)
+				fetchRemote(ctx, drv, place.root)
 			}
 			if ahead, behind, err := drv.AheadBehind(place.root); err == nil {
 				insight.ahead, insight.behind, insight.synced = ahead, behind, true
@@ -287,7 +317,11 @@ func scanSessions(drv *git.Driver, capture func(string) string, targets []prScan
 		}
 		listing, known := listings[place.repoURL]
 		if !known {
-			listing = listPullRequests(ctx, place.root, place.repoURL)
+			asked++
+			var err error
+			if listing, err = listPullRequests(ctx, place.root, place.repoURL); err == nil {
+				answered++
+			}
 			listings[place.repoURL] = listing
 		}
 
@@ -365,7 +399,8 @@ func scanSessions(drv *git.Driver, capture func(string) string, targets []prScan
 	// others, and the ones it missed look empty rather than unread. gh missing
 	// is the same kind of gap: the git half still ran, but nothing can be
 	// concluded about pull requests from a pass that never asked.
-	return found, links, ctx.Err() == nil && ghErr == nil
+	reached := ctx.Err() == nil && ghErr == nil && (asked == 0 || answered > 0)
+	return found, links, reached
 }
 
 // allowedRepos is which repositories an address printed in a session may name
@@ -422,6 +457,13 @@ func lookupPR(ctx context.Context, root, prURL string, listing []pullRequest, vi
 // repository, one nobody published, or one on a detached head all resolve to
 // nothing to look up.
 func locatePlace(drv *git.Driver, dir string) prPlace {
+	// An empty directory is not "no directory" to git: a command run with no
+	// working directory inherits this process's own, so a session without one
+	// would be answered with whatever repository the manager itself was
+	// started in, and wear its pull requests.
+	if dir == "" {
+		return prPlace{}
+	}
 	root, err := drv.RepoRoot(dir)
 	if err != nil {
 		return prPlace{}
@@ -496,11 +538,19 @@ var listPullRequests = ghOpenPullRequests
 // second, and a checkout that is nobody's fork answers both with the same
 // repository, where the merge drops the repeats. The remote's own listing
 // goes first: it is the repository the branch was actually pushed to.
-func ghOpenPullRequests(ctx context.Context, root, repoURL string) []pullRequest {
+func ghOpenPullRequests(ctx context.Context, root, repoURL string) ([]pullRequest, error) {
 	seen := map[string]bool{}
 	var found []pullRequest
+	var failures []error
+	answered := false
 	for _, repo := range []string{repoURL, ""} {
-		for _, pr := range ghListRun(ctx, root, repo) {
+		list, err := ghListRun(ctx, root, repo)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		answered = true
+		for _, pr := range list {
 			if seen[pr.URL] {
 				continue
 			}
@@ -508,7 +558,12 @@ func ghOpenPullRequests(ctx context.Context, root, repoURL string) []pullRequest
 			found = append(found, pr)
 		}
 	}
-	return found
+	// One listing answering is enough to know what is open: a fork whose
+	// parent refuses is still a fork whose own pull requests were read.
+	if answered {
+		return found, nil
+	}
+	return nil, errors.Join(failures...)
 }
 
 // ghListRun is the seam tests swap to observe the two listings separately.
@@ -536,7 +591,7 @@ func ghViewPullRequest(ctx context.Context, root, prURL string) pullRequest {
 	return pr
 }
 
-func ghListOnce(ctx context.Context, root, repo string) []pullRequest {
+func ghListOnce(ctx context.Context, root, repo string) ([]pullRequest, error) {
 	args := []string{"pr", "list", "--state", "open", "--limit", prListLimit,
 		"--json", prFields}
 	if repo != "" {
@@ -546,13 +601,13 @@ func ghListOnce(ctx context.Context, root, repo string) []pullRequest {
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var prs []pullRequest
 	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil
+		return nil, err
 	}
-	return prs
+	return prs, nil
 }
 
 // pullRequestsOn is one branch's open pull requests, for the key that cannot
@@ -564,8 +619,12 @@ func pullRequestsOn(ctx context.Context, root, repoURL, branch string) []pullReq
 	if _, err := lookPath("gh"); err != nil {
 		return nil
 	}
+	list, err := listPullRequests(ctx, root, repoURL)
+	if err != nil {
+		return nil
+	}
 	var found []pullRequest
-	for _, pr := range listPullRequests(ctx, root, repoURL) {
+	for _, pr := range list {
 		if pr.Head == branch {
 			found = append(found, pr)
 		}
@@ -582,9 +641,20 @@ func (m *Model) prChip(sess store.Session) string {
 		return ""
 	}
 	pr := prs[0]
+	// A recorded address nothing could be read back from leaves no number to
+	// show. "#0" would be a badge claiming a pull request that does not
+	// exist; P still opens the address, which is all that was ever known.
+	if pr.Number <= 0 {
+		return ""
+	}
 	label := "#" + strconv.Itoa(pr.Number)
 	if pr.IsDraft {
 		label += prDraftMark
+	}
+	// A conflict is a different problem from a failing check and gets its own
+	// mark rather than borrowing the tint, which is already spoken for.
+	if pr.conflicting() {
+		label += prConflictMark
 	}
 	if extra := len(prs) - 1; extra > 0 {
 		label += "+" + strconv.Itoa(extra)
@@ -614,7 +684,7 @@ func (m *Model) prChip(sess store.Session) string {
 
 // fetchRemote is the seam tests swap, so a pass under test never reaches a
 // network and never writes to a repository it did not create.
-var fetchRemote = func(drv *git.Driver, root string) { drv.Fetch(root) }
+var fetchRemote = func(ctx context.Context, drv *git.Driver, root string) { drv.Fetch(ctx, root) }
 
 // syncChip is what a session's checkout owes its remote: work it has not
 // pushed, work it has not pulled, or both.
@@ -645,4 +715,18 @@ func (m *Model) syncChip(sess store.Session) string {
 		return roundPill(label, colorWaiting)
 	}
 	return roundPill(label, colorSubtle)
+}
+
+// prSize is what a session's leading pull request changes, for the places
+// with room to say it.
+func (m *Model) prSize(sess store.Session) string {
+	prs := m.insights[sess.ID].prs
+	if len(prs) == 0 {
+		return ""
+	}
+	size := prs[0].size()
+	if size == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s in %d files", size, prs[0].ChangedFiles)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"github.com/YoanWai/agent-manager/internal/testenv"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -20,9 +21,7 @@ import (
 // tests make. A signing agent that has locked asks for a passphrase, and a
 // prompt nobody is there to answer hangs the run instead of failing it.
 func TestMain(m *testing.M) {
-	os.Setenv("GIT_CONFIG_COUNT", "1")
-	os.Setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
-	os.Setenv("GIT_CONFIG_VALUE_0", "false")
+	testenv.UnsignCommits()
 	os.Exit(m.Run())
 }
 

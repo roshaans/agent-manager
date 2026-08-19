@@ -1,8 +1,14 @@
 package git
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestWebURLFromEveryRemoteForm(t *testing.T) {
@@ -95,5 +101,84 @@ func TestRemoteURLWithoutAnyRemote(t *testing.T) {
 
 	if got, err := driver.RemoteURL(dir); err == nil {
 		t.Fatalf("RemoteURL = %q, want an error for a repository with no remote", got)
+	}
+}
+
+// fakeGit puts a stand-in git at a path and hands back a driver pointed at
+// it, so a fetch can be observed without a remote to talk to.
+func fakeGit(t *testing.T, script string) (*Driver, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "git")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return &Driver{bin: bin}, dir
+}
+
+// A background fetch has no terminal to prompt at and nobody watching for
+// one. Every way git could stop and ask has to be turned off, or a remote
+// wanting a password sits there until the manager quits.
+func TestFetchCannotStopToAskAnyone(t *testing.T) {
+	drv, dir := fakeGit(t, `#!/bin/sh
+printf '%s\n' "$*" > "$(dirname "$0")/args"
+printf 'GIT_TERMINAL_PROMPT=[%s] GIT_ASKPASS=[%s] SSH_ASKPASS=[%s] GIT_SSH_COMMAND=[%s]\n' \
+  "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$SSH_ASKPASS" "$GIT_SSH_COMMAND" > "$(dirname "$0")/env"
+exit 0
+`)
+	if err := drv.Fetch(context.Background(), t.TempDir()); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+
+	env, err := os.ReadFile(filepath.Join(dir, "env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"GIT_TERMINAL_PROMPT=[0]", "GIT_ASKPASS=[]", "SSH_ASKPASS=[]", "BatchMode=yes",
+	} {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("fetch ran without %s:\n  %s", want, env)
+		}
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FETCH_HEAD is a file an agent may be reading for its own purposes.
+	if !strings.Contains(string(args), "--no-write-fetch-head") {
+		t.Errorf("fetch rewrote FETCH_HEAD: %s", args)
+	}
+}
+
+// A fetch that hangs must end with the pass rather than outlive it.
+func TestFetchStopsWithItsContext(t *testing.T) {
+	drv, _ := fakeGit(t, "#!/bin/sh\nsleep 30\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := drv.Fetch(ctx, t.TempDir())
+
+	if err == nil {
+		t.Fatal("a fetch that outran its context reported success")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("fetch ran %s past its deadline", elapsed)
+	}
+}
+
+// A branch nobody pushed has no upstream, and zero would report that as
+// being in step with one.
+func TestAheadBehindWithoutAnUpstream(t *testing.T) {
+	driver, dir := testRepo(t)
+	write(t, dir, "a.txt", "one")
+	commit(t, dir, "first")
+
+	if _, _, err := driver.AheadBehind(dir); err == nil {
+		t.Fatal("a branch with no upstream reported a count")
 	}
 }
