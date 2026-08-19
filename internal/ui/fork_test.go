@@ -512,3 +512,137 @@ func TestForkRefusesAShellInItsOwnTerms(t *testing.T) {
 		t.Fatalf("err = %q should not name a config field", m.errBar.text)
 	}
 }
+
+// The bug this fixes: a fork used to be handed its source's directory, so two
+// agents wrote to one checkout — the thing AGENTS.md warns against, reached
+// by pressing one key.
+func TestForkOfAWorktreeSessionGetsItsOwn(t *testing.T) {
+	m := buildModel(t)
+	repo := seedRepo(t)
+	source := forkableSource(t, m, "feature", repo, true)
+
+	m.openFork()
+	if !m.fork.worktree {
+		t.Fatal("forking a worktree session did not default to a worktree of its own")
+	}
+	m.fork.name.SetValue("feature-fork")
+	_, cmd := m.submitFork()
+	m.applyCmd(t, cmd)
+
+	forked := sessionNamed(t, m, "feature-fork")
+	if forked.Cwd == source.Cwd {
+		t.Fatalf("the fork shares its source's checkout: %s", forked.Cwd)
+	}
+	if forked.WorktreeBranch == source.WorktreeBranch {
+		t.Fatalf("the fork shares its source's branch: %s", forked.WorktreeBranch)
+	}
+	if forked.WorktreeRepo != source.WorktreeRepo {
+		t.Fatalf("the fork was cut from %q, want the source's repository %q",
+			forked.WorktreeRepo, source.WorktreeRepo)
+	}
+	if !isDir(forked.Cwd) {
+		t.Fatalf("the fork's worktree was never made: %s", forked.Cwd)
+	}
+}
+
+// A fork continues its source's work, so it branches from where the source is
+// rather than from the repository's base.
+func TestForkBranchesFromItsSource(t *testing.T) {
+	m := buildModel(t)
+	repo := seedRepo(t)
+	source := forkableSource(t, m, "feature", repo, true)
+	// Work the source has committed but never merged.
+	writeCommit(t, source.Cwd, "only-here.txt", "x")
+
+	m.openFork()
+	m.fork.name.SetValue("feature-fork")
+	_, cmd := m.submitFork()
+	m.applyCmd(t, cmd)
+
+	forked := sessionNamed(t, m, "feature-fork")
+	if _, err := os.Stat(filepath.Join(forked.Cwd, "only-here.txt")); err != nil {
+		t.Fatalf("the fork did not carry the source's commits: %v", err)
+	}
+}
+
+// Sharing the directory is still reachable, for the times that is what you
+// meant — but now it is a choice rather than the only behaviour.
+func TestForkCanStillShareTheDirectory(t *testing.T) {
+	m := buildModel(t)
+	repo := seedRepo(t)
+	source := forkableSource(t, m, "feature", repo, true)
+
+	m.openFork()
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Alt: true, Runes: []rune{'w'}})
+	*m = *updated.(*Model)
+	if m.fork.worktree {
+		t.Fatal("alt+w did not turn the worktree off")
+	}
+	m.fork.name.SetValue("feature-fork")
+	_, cmd := m.submitFork()
+	m.applyCmd(t, cmd)
+
+	if forked := sessionNamed(t, m, "feature-fork"); forked.Cwd != source.Cwd {
+		t.Fatalf("the fork ran in %q, want its source's directory %q", forked.Cwd, source.Cwd)
+	}
+}
+
+// A session that is not in a repository at all has nowhere to cut a worktree,
+// and the fork has to land in its directory rather than refuse.
+func TestForkOutsideARepositorySharesTheDirectory(t *testing.T) {
+	m := buildModel(t)
+	dir := t.TempDir()
+	forkableSource(t, m, "loose", dir, false)
+
+	m.openFork()
+	if m.forkWorktreeOn() {
+		t.Fatal("offered a worktree in a directory that cannot host one")
+	}
+	m.fork.name.SetValue("loose-fork")
+	_, cmd := m.submitFork()
+	m.applyCmd(t, cmd)
+
+	if forked := sessionNamed(t, m, "loose-fork"); forked.Cwd != dir {
+		t.Fatalf("the fork ran in %q, want %q", forked.Cwd, dir)
+	}
+}
+
+// forkable gives the test config's agent a fork command, without which
+// openFork refuses before any of this is reached.
+func forkable(t *testing.T, m *Model, toolName string) {
+	t.Helper()
+	tool := m.cfg.Tools[toolName]
+	tool.ForkCommand = "true {id}; cat"
+	m.cfg.Tools[toolName] = tool
+}
+
+// forkableSource is a session a fork can actually be taken from: a real
+// worktree to branch off, a tool that knows how to fork, and the captured
+// conversation id openFork insists on.
+func forkableSource(t *testing.T, m *Model, name, dir string, worktree bool) store.Session {
+	t.Helper()
+	forkable(t, m, "claude")
+	if worktree {
+		createWorktreeSession(t, m, name, dir)
+	} else {
+		createSession(t, m, name, dir, "")
+	}
+	source := sessionNamed(t, m, name)
+	if err := m.store.SetAgentSessionID(source.ID, "conversation"); err != nil {
+		t.Fatalf("set conversation id: %v", err)
+	}
+	m.applyCmd(t, m.refreshCmd())
+	m.selectSessionRow(t, name)
+	return sessionNamed(t, m, name)
+}
+
+func sessionNamed(t *testing.T, m *Model, name string) store.Session {
+	t.Helper()
+	for _, sess := range m.sessions {
+		if sess.Name == name {
+			return sess
+		}
+	}
+	t.Fatalf("no session named %q", name)
+	return store.Session{}
+}

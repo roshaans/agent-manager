@@ -83,7 +83,7 @@ func helpSections() []helpSection {
 			{"c", "fork without the context: a fresh chat on this checkout"},
 			{"shift+←→", "next / previous chat of this checkout (tab / shift+tab too)"},
 			{"1…9", "jump to that chat of this checkout"},
-			{"f", "fork it into a new session in the same group"},
+			{"f", "fork it into a new session (alt+w: share its directory)"},
 			{"r", "rename it, and re-pick its tool"},
 			{"m", "move it to a group, or a terminal into a session"},
 			{"o", "open its working directory in your editor"},

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -24,6 +25,9 @@ var forkSessionFileResolver = agentsession.SessionFile
 type forkState struct {
 	source store.Session
 	name   textinput.Model
+	// worktree gives the fork a checkout of its own rather than the one its
+	// source is working in.
+	worktree bool
 }
 
 func (m *Model) openFork() {
@@ -52,7 +56,14 @@ func (m *Model) openFork() {
 	name.SetValue(entry.sess.Name + "-fork")
 	name.CursorEnd()
 	name.Focus()
-	m.fork = forkState{source: entry.sess, name: name}
+	// A fork of a session in a worktree gets one of its own by default. Two
+	// agents in one checkout is what this app's own guidance warns against,
+	// and a fork is the one path that used to land there without asking.
+	m.fork = forkState{
+		source:   entry.sess,
+		name:     name,
+		worktree: entry.sess.WorktreeRepo != "",
+	}
 	m.errBar.text = ""
 	m.mode = modeFork
 }
@@ -65,6 +76,9 @@ func (m *Model) handleForkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		return m.submitFork()
+	case "alt+w", "shift+tab":
+		m.fork.worktree = !m.fork.worktree
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.fork.name, cmd = m.fork.name.Update(msg)
@@ -137,8 +151,23 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 		// the store's.
 		ParentID: source.ID,
 	}
+	// Cut from the source's own branch rather than the repository's base, so
+	// the fork carries on from the commits its conversation already made.
+	// Uncommitted work stays where it is: it belongs to the session still
+	// holding it, and copying it would give two agents the same edits again
+	// by another route.
+	made := false
+	if m.forkWorktreeOn() {
+		repo, path, branch, err := m.cutForkWorktree(source)
+		if err != nil {
+			m.errBar.text = "worktree for the fork: " + err.Error()
+			return m, nil
+		}
+		forked.Cwd, forked.WorktreeRepo, forked.WorktreeBranch = path, repo, branch
+		made = true
+	}
 	m.errBar.text = ""
-	if err := m.launchNewSession(forked, tool, baseCommand, spawn.LaunchOptions{}); err != nil {
+	if err := m.launchNewSession(forked, tool, baseCommand, spawn.LaunchOptions{RollbackWorktree: made}); err != nil {
 		m.reportLaunchError(err)
 		return m, nil
 	}
@@ -149,6 +178,29 @@ func (m *Model) submitFork() (tea.Model, tea.Cmd) {
 	m.mode = modeList
 	m.focusSession(managerID)
 	return m, m.refreshCmd()
+}
+
+// cutForkWorktree gives the fork a checkout of its own, branched from where
+// its source is. The repository is the one the source's worktree was cut
+// from; a source working directly in a checkout is its own repository.
+func (m *Model) cutForkWorktree(source store.Session) (repo, path, branch string, err error) {
+	if m.gitDrv == nil {
+		return "", "", "", errors.New("git is not installed")
+	}
+	repo = source.WorktreeRepo
+	if repo == "" {
+		if repo, err = m.gitDrv.RepoRoot(source.Cwd); err != nil {
+			return "", "", "", err
+		}
+	}
+	from := source.WorktreeBranch
+	if from == "" {
+		if opened, err := m.gitDrv.OpenRepo(source.Cwd); err == nil && !opened.Detached && !opened.Unborn {
+			from = opened.Branch
+		}
+	}
+	path, branch, err = m.gitDrv.AddWorktreeFrom(repo, m.fork.name.Value(), from)
+	return repo, path, branch, err
 }
 
 func validateForkSource(toolName string, tool config.Tool, source store.Session) error {
@@ -201,8 +253,24 @@ func expandForkCommand(template, sourceID, newID, name, sessionFile string) stri
 }
 
 func (m *Model) viewFork() string {
+	where := "its own worktree"
+	if !m.forkWorktreeOn() {
+		where = valueStyle.Render(m.fork.source.Name) + "'s directory"
+		if !m.worktreeCapable(m.fork.source.Cwd) {
+			where += subtleStyle.Render("  (not a git repo)")
+		}
+	}
 	body := "  source  " + valueStyle.Render(m.fork.source.Name) + "\n" +
 		"  group   " + groupBadge(displayGroup(m.fork.source.Group)) + "\n" +
+		"  runs in " + where + "\n" +
 		formField("name", m.fork.name.View(), true)
-	return m.card("⑂ Fork Session", body, [][2]string{{"↵", "create"}, {"esc", "cancel"}})
+	return m.card("⑂ Fork Session", body, [][2]string{
+		{"↵", "create"}, {"alt+w", "worktree"}, {"esc", "cancel"},
+	})
+}
+
+// forkWorktreeOn is what the card shows and the fork spawns with: the toggle,
+// unless the source's directory cannot host a worktree at all.
+func (m *Model) forkWorktreeOn() bool {
+	return m.fork.worktree && m.worktreeCapable(m.fork.source.Cwd)
 }
