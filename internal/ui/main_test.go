@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/YoanWai/agent-manager/internal/git"
+	"github.com/YoanWai/agent-manager/internal/testenv"
 )
 
 // testSocket is an isolated tmux server for this package's tests, so they
@@ -19,7 +23,10 @@ const testSocket = "amuitest"
 // ("server exited unexpectedly", the recurring CI failure in
 // TestFocusWatchReportsCursor).
 func TestMain(m *testing.M) {
-	unsignCommits()
+	testenv.UnsignCommits()
+	// No test reaches a network. A seeded repository names a remote it
+	// cannot talk to, and a pass that really fetched would hang on it.
+	fetchRemote = func(context.Context, *git.Driver, string) {}
 	// kill-server fails whenever no server is up, which is the normal case.
 	tmuxCmd("kill-server").Run()
 	// Without tmux the run still starts: each test skips through its own
@@ -34,17 +41,6 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	tmuxCmd("kill-server").Run()
 	os.Exit(code)
-}
-
-// unsignCommits stops the machine's own git config from signing the commits
-// these tests make, for every git the run reaches — the helpers here and the
-// ones the code under test shells out to. A signing agent that has locked
-// asks for a passphrase, and a prompt nobody is there to answer hangs the
-// run instead of failing it.
-func unsignCommits() {
-	os.Setenv("GIT_CONFIG_COUNT", "1")
-	os.Setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
-	os.Setenv("GIT_CONFIG_VALUE_0", "false")
 }
 
 // tmuxCmd builds a raw tmux command aimed at the test socket, matching the

@@ -30,9 +30,9 @@ func captureListing(t *testing.T, prs ...pullRequest) *int {
 	t.Helper()
 	calls := 0
 	prev := listPullRequests
-	listPullRequests = func(context.Context, string, string) []pullRequest {
+	listPullRequests = func(context.Context, string, string) ([]pullRequest, error) {
 		calls++
-		return prs
+		return prs, nil
 	}
 	t.Cleanup(func() { listPullRequests = prev })
 	return &calls
@@ -115,7 +115,7 @@ func TestPRKeyOpensTheScannedPullRequestWithoutAsking(t *testing.T) {
 	calls := captureListing(t)
 	prRepo(t, m, "git@github.com:owner/repo.git")
 	pr := pullRequest{Number: 7, URL: "https://github.com/owner/repo/pull/7", Head: "main"}
-	m.prs = map[string][]pullRequest{m.sessionRows()[0].ID: {pr}}
+	m.insights = insightsOf(map[string][]pullRequest{m.sessionRows()[0].ID: {pr}})
 
 	pressPRKey(t, m)
 
@@ -152,10 +152,10 @@ func TestPRKeyOpensTheChooserForSeveral(t *testing.T) {
 	pretendGH(t)
 	opened := captureOpenedLink(t)
 	prRepo(t, m, "git@github.com:owner/repo.git")
-	m.prs = map[string][]pullRequest{m.sessionRows()[0].ID: {
+	m.insights = insightsOf(map[string][]pullRequest{m.sessionRows()[0].ID: {
 		{Number: 12, URL: "https://github.com/owner/repo/pull/12", Title: "the fix", Base: "main", Head: "main"},
 		{Number: 11, URL: "https://github.com/owner/repo/pull/11", Title: "the backport", Base: "release-1", Head: "main"},
-	}}
+	}})
 
 	pressPRKey(t, m)
 

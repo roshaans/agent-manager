@@ -21,7 +21,7 @@ Agent sessions live on a private tmux server named `agentmgr`, so they never mix
 | `G` | Open [lazygit](#lazygit) on the row's repository, full screen; quit it to come back to the list |
 | `Y` | Copy the selected row's directory to the clipboard: a session's checkout — its worktree, when it has one — or a group's default path |
 | `i` | The rules the selected session runs under: the `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` its tool reads, read in place or opened in your editor ([Agent rules](#agent-rules)) |
-| `f` | Fork the selected conversation into a named session in the same group and directory |
+| `f` | Fork the selected conversation into a named session in the same group. A fork of a worktree session gets a worktree of its own, branched from where its source is, so two agents never write to one checkout; `alt+w` shares the source's directory instead |
 | `g` | New group (name, parent, default path) |
 | `enter` | Focus session in place (keys go to the agent, list stays) / fold group |
 | `A` | Attach session full screen (Settings can swap it with `enter`) |
@@ -115,7 +115,7 @@ lazygit has to be on `PATH` — nothing is configurable here, and the status lin
 
 ## Pull requests
 
-A session with an open pull request wears its number: `#328` beside the name, dimmed and marked `✎` while the pull request is still a draft, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
+A session with an open pull request wears its number: `#328` beside the name, on a chip tinted by that pull request's checks — green when they pass, amber while they run, red when one fails, and a neutral tint when it has none. A draft sits on the plain chip and is marked `✎`, and `⚠` marks one git cannot merge as it stands, and suffixed `+1` when there is more than one. `P` opens it in your browser. A session with several opens a picker, where `↵` opens the one under the cursor and `r` opens the repository instead.
 
 `P` on a session with **no** pull request offers to open one: `↵` pushes the branch and creates it, titled from its commits, in the repository the branch was pushed to. `r` opens the repository page, which is what `P` used to do here on its own. Creating it this way is the only moment the link between a session and its pull request is a fact rather than a reading — everything below is working out after the event what this knows at it.
 
@@ -132,9 +132,19 @@ A session that opened a pull request somewhere else has not stopped working on t
 
 The created and printed links are written to the session and outlive the manager run, because what a session printed scrolls out of its pane long before the work it names is finished with. The titles and states are not stored — those are re-read every pass, so a badge is never a stale claim. A pull request that has been merged stops wearing a badge, since the badge is for work in flight, but `P` still opens it: it is still what that session produced.
 
-The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Each repository is listed once per pass no matter how many sessions or worktrees sit in it, and sessions sharing a checkout share the one commit lookup, so a dozen agents on one repo cost one pass and not a dozen. Without `gh` — or signed out of it, or on a host it does not know — no badges appear and `P` opens the repository page. Nothing is cached to disk except the link itself.
+On a wide enough pane the detail head adds what the pull request does to the tree — `+588 −99 in 14 files` — and the picker shows it beside each entry, which is what tells a one-line fix from a rewrite. The checks, the mergeability and the size all ride the same listing as the numbers, so none of them costs an extra request. The numbers come from [`gh`](https://cli.github.com), re-read once a minute. Each repository is listed once per pass no matter how many sessions or worktrees sit in it, and sessions sharing a checkout share the one commit lookup, so a dozen agents on one repo cost one pass and not a dozen. Without `gh` — or signed out of it, or on a host it does not know — no badges appear and `P` opens the repository page. Nothing is cached to disk except the link itself.
 
 A checkout whose `origin` is a fork is read twice per pass — once naming that fork, once letting `gh` resolve the repository itself, which always answers with the parent. Both are needed, because a fork holds pull requests either way round: opened against the parent, a pull request lives upstream, and opened against the fork it lives on the fork. A checkout that is nobody's fork answers both the same way and the repeats are dropped.
+
+## Ahead and behind
+
+A session whose checkout has drifted from its remote branch says so beside its name: `❨↑2❩` for commits it has not pushed, `❨↓3❩` for commits the remote has that it does not. Behind is coloured to be noticed and ahead is not, because unpushed work is what a session in progress looks like, while a checkout that has fallen behind is usually a conflict nobody has run into yet.
+
+A branch with no upstream shows nothing at all. "In step" and "nothing to compare against" are different answers, and a `↑0 ↓0` would report the second as the first.
+
+The brackets are what tell this apart from the chips beside it: the tool, the branch and the pull request are all things that exist somewhere, where this is a comparison between two of them and belongs to neither.
+
+This rides the same once-a-minute pass as the [pull request](#pull-requests) badge. Ahead comes out of git alone, so it works with no network and with no `gh` installed. Behind is only as fresh as the last fetch, so the pass fetches — once per repository rather than once per session, since several worktrees of one repository all have the same answer. The fetch moves remote-tracking refs and nothing else: no local branch, no index, nothing in the working tree, and `FETCH_HEAD` is deliberately left alone, since that is a file an agent may be reading for its own purposes.
 
 ## Agent rules
 

@@ -546,8 +546,10 @@ func (m *Model) renderSessionEntry(entry treeRow, selected bool, width int, pad,
 		nameStyle = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 	}
 	head := pad + guides + dot + " " + nameStyle.Render(m.displayName(sess))
-	if chip := m.prChip(sess); chip != "" {
-		head += " " + chip
+	for _, chip := range []string{m.prChip(sess), m.syncChip(sess)} {
+		if chip != "" {
+			head += " " + chip
+		}
 	}
 	focused := selected && m.mode == modeFocus
 	if focused {
@@ -890,12 +892,20 @@ func (m *Model) viewDetail(width int) string {
 	// has both wants the number, and the branch is the half they can also
 	// read off the row they came from.
 	withPR := withTool
-	if chip := m.prChip(sess); chip != "" {
-		withPR = withTool + " " + chip
+	for _, chip := range []string{m.prChip(sess), m.syncChip(sess)} {
+		if chip != "" {
+			withPR += " " + chip
+		}
 	}
 	heads := []string{withPR, withTool, name}
 	if sess.WorktreeBranch != "" {
 		heads = append([]string{withPR + " " + chipStyle.Render("⑂ "+sess.WorktreeBranch)}, heads...)
+	}
+	// What the pull request does to the tree only earns a place once
+	// everything else has one, so it rides the front of the ladder: shown on
+	// a pane wide enough for it, dropped first when there is not room.
+	if size := m.prSize(sess); size != "" {
+		heads = append([]string{heads[0] + " " + subtleStyle.Render(size)}, heads...)
 	}
 
 	usage := ""

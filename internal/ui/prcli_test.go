@@ -94,7 +94,10 @@ func TestGHListOnceNamesTheRepositoryOnlyWhenGiven(t *testing.T) {
 	cli := newFakeCLI(t)
 	cli.answers(t, "pr-list", onePR)
 
-	got := ghListOnce(context.Background(), t.TempDir(), "https://github.com/me/fork")
+	got, err := ghListOnce(context.Background(), t.TempDir(), "https://github.com/me/fork")
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
 	if len(got) != 1 || got[0].Number != 7 || got[0].Head != "am/x" || got[0].Base != "main" {
 		t.Fatalf("decoded %+v, want the listing's own fields", got)
 	}
@@ -114,8 +117,10 @@ func TestGHCallsThatRefuseReturnNothing(t *testing.T) {
 	newFakeCLI(t, "pr-list", "pr-view", "api")
 	ctx, dir := context.Background(), t.TempDir()
 
-	if got := ghListOnce(ctx, dir, ""); got != nil {
-		t.Fatalf("listing = %v, want nothing", got)
+	// A refusal has to be distinguishable from an empty repository, or the
+	// pass cannot tell "no pull requests" from "GitHub would not say".
+	if got, err := ghListOnce(ctx, dir, ""); got != nil || err == nil {
+		t.Fatalf("listing = %v, %v; want nothing and an error", got, err)
 	}
 	if got := ghViewPullRequest(ctx, dir, "https://github.com/me/fork/pull/7"); got.URL != "" {
 		t.Fatalf("view = %+v, want the zero pull request", got)
@@ -243,8 +248,20 @@ func TestEveryQueryAgreesWithTheStruct(t *testing.T) {
 			t.Errorf("the commit lookup produces %q, which pullRequest cannot hold", name)
 		}
 	}
+	// Fields the commit lookup genuinely cannot answer for. The REST endpoint
+	// it uses returns pull requests containing a commit, and every one of
+	// these reads back null from it, so a pull request found only that way
+	// goes without until a listing covers it too. Named here so adding a field by accident still
+	// fails, and adding one deliberately has to say so.
+	listingOnly := map[string]bool{
+		"statusCheckRollup": true,
+		"mergeable":         true,
+		"additions":         true,
+		"deletions":         true,
+		"changedFiles":      true,
+	}
 	for _, name := range strings.Split(prFields, ",") {
-		if !produced[name] {
+		if !produced[name] && !listingOnly[name] {
 			t.Errorf("gh is asked for %q but the commit lookup never produces it", name)
 		}
 	}

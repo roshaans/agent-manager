@@ -12,6 +12,7 @@ import (
 	"github.com/YoanWai/agent-manager/internal/hooks"
 	"github.com/YoanWai/agent-manager/internal/status"
 	"github.com/YoanWai/agent-manager/internal/store"
+	"github.com/YoanWai/agent-manager/internal/testenv"
 	"github.com/YoanWai/agent-manager/internal/tmux"
 )
 
@@ -25,6 +26,7 @@ const testSocket = "amspawntest"
 // their sessions in cleanup, and a server whose last session dies begins an
 // exit-empty shutdown that takes the next test's fresh session down with it.
 func TestMain(m *testing.M) {
+	testenv.UnsignCommits()
 	tmuxCmd("kill-server").Run()
 	if _, err := exec.LookPath("tmux"); err == nil {
 		if out, err := tmuxCmd("new-session", "-d", "-s", "anchor").CombinedOutput(); err != nil {

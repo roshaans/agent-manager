@@ -225,6 +225,35 @@ func pill(text string, fg lipgloss.Color) string {
 	return chipStyle.Foreground(fg).Render(text)
 }
 
+// shadedPill renders a chip on its own fill rather than the one every other
+// chip shares: the surface lifted toward tint, so the chip reads as a class of
+// its own while still being a chip. Resolved per call so it follows the live
+// theme and color profile the way annotationBg does.
+//
+// The tint goes in the fill and the text stays bright, rather than the other
+// way round. A status colour is chosen to be read against the row's own
+// background, and putting one on a lifted chip measures as low as 1.3 against
+// it — a colour nobody can read is not a signal.
+func shadedPill(text string, tint lipgloss.Color) string {
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color(mix(current.Surface, string(tint), 0.30))).
+		Foreground(colorBright).
+		Padding(0, 1).
+		Render(text)
+}
+
+// roundPill renders a chip inside rounded ornaments instead of on a fill.
+//
+// How far a checkout has drifted from its remote is not a fact about the
+// session the way its tool and branch are, and it is not a thing that lives
+// anywhere but in the two repositories being compared. A light bracket keeps
+// it apart from the chips around it, and the ornaments are ordinary Unicode
+// rather than a patched font's private range.
+func roundPill(text string, fg lipgloss.Color) string {
+	edge := lipgloss.NewStyle().Foreground(colorSubtle)
+	return edge.Render("❨") + lipgloss.NewStyle().Foreground(fg).Render(text) + edge.Render("❩")
+}
+
 // keyPill renders a chip with the key that changes it dimmed in front, so
 // the header doubles as a key legend: each changeable value wears its
 // shortcut. The key is dim enough to lose to the value at a glance but
