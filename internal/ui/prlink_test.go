@@ -30,9 +30,9 @@ func captureListing(t *testing.T, prs ...pullRequest) *int {
 	t.Helper()
 	calls := 0
 	prev := listPullRequests
-	listPullRequests = func(context.Context, string, string) []pullRequest {
+	listPullRequests = func(context.Context, string, string) ([]pullRequest, error) {
 		calls++
-		return prs
+		return prs, nil
 	}
 	t.Cleanup(func() { listPullRequests = prev })
 	return &calls

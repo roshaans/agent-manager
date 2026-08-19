@@ -1,12 +1,16 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ErrNoRemote is a repository with nowhere to open: no remote at all, or one
@@ -108,6 +112,10 @@ func (d *Driver) AheadBehind(root string) (ahead, behind int, err error) {
 	return ahead, behind, nil
 }
 
+// fetchWaitDelay is how long a killed fetch has to let go of its output
+// before the wait gives up on it.
+const fetchWaitDelay = 2 * time.Second
+
 // Fetch updates what the repository knows about its remote. Only the
 // remote-tracking refs move: no local branch, no index, and nothing in the
 // working tree, so it is safe to run under an agent that is mid-edit.
@@ -115,7 +123,29 @@ func (d *Driver) AheadBehind(root string) (ahead, behind int, err error) {
 // FETCH_HEAD is deliberately left alone. It is a file an agent may be reading
 // for its own purposes, and a background pass has no business rewriting it
 // every minute.
-func (d *Driver) Fetch(root string) error {
-	_, err := d.run(root, "fetch", "--quiet", "--no-write-fetch-head")
-	return err
+//
+// Nothing here may ask a human anything. A background fetch has no terminal
+// to prompt at and nobody watching for one: git would sit forever on a
+// credential prompt, ssh on a passphrase, and a desktop askpass would put a
+// dialog on screen that no part of this app can explain. Every one of those
+// is turned off, so an unreachable or unauthenticated remote fails and the
+// pass carries on with what it already knew. The context bounds the rest.
+func (d *Driver) Fetch(ctx context.Context, root string) error {
+	cmd := exec.CommandContext(ctx, d.bin, "fetch", "--quiet", "--no-write-fetch-head")
+	cmd.Dir = root
+	// Killing the process is not enough on its own: anything it spawned
+	// inherits the output pipe, and reading that pipe is what the wait is
+	// blocked on, so a child outliving its parent keeps the whole call alive
+	// well past the deadline. WaitDelay puts a floor under that.
+	cmd.WaitDelay = fetchWaitDelay
+	cmd.Env = append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+		"GIT_SSH_COMMAND=ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

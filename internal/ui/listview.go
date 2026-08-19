@@ -963,6 +963,12 @@ func (m *Model) viewDetail(width int) string {
 	if sess.WorktreeBranch != "" {
 		heads = append([]string{withPR + " " + chipStyle.Render("⑂ "+sess.WorktreeBranch)}, heads...)
 	}
+	// What the pull request does to the tree only earns a place once
+	// everything else has one, so it rides the front of the ladder: shown on
+	// a pane wide enough for it, dropped first when there is not room.
+	if size := m.prSize(sess); size != "" {
+		heads = append([]string{heads[0] + " " + subtleStyle.Render(size)}, heads...)
+	}
 
 	usage := ""
 	if m.procFor == sess.ID && m.proc.OK {

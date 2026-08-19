@@ -207,6 +207,9 @@ func (m *Model) viewPRPick() string {
 		// The base branch is what tells two pull requests off the same branch
 		// apart, which is the only reason this card is on screen.
 		b.WriteString(mutedStyle.Render("  → " + pr.Base))
+		if size := pr.size(); size != "" {
+			b.WriteString(subtleStyle.Render("  " + size))
+		}
 		b.WriteByte('\n')
 	}
 	hint := [][2]string{{"↑↓", "move"}, {"↵", "open"}, {"r", "repository"}, {"esc", "back"}}

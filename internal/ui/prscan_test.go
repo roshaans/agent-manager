@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,16 +82,16 @@ func TestScanListsTheRemoteAndWhatGHResolves(t *testing.T) {
 	pretendGH(t)
 	var asked []string
 	prev := listPullRequests
-	listPullRequests = func(_ context.Context, root, repoURL string) []pullRequest {
+	listPullRequests = func(_ context.Context, root, repoURL string) ([]pullRequest, error) {
 		return ghOpenPullRequests(context.Background(), root, repoURL)
 	}
 	prevRun := ghListRun
-	ghListRun = func(_ context.Context, _, repo string) []pullRequest {
+	ghListRun = func(_ context.Context, _, repo string) ([]pullRequest, error) {
 		asked = append(asked, repo)
 		if repo == "" {
-			return []pullRequest{{Number: 328, URL: "upstream/328", Head: "main"}}
+			return []pullRequest{{Number: 328, URL: "upstream/328", Head: "main"}}, nil
 		}
-		return []pullRequest{{Number: 1, URL: "fork/1", Head: "main"}}
+		return []pullRequest{{Number: 1, URL: "fork/1", Head: "main"}}, nil
 	}
 	t.Cleanup(func() { listPullRequests, ghListRun = prev, prevRun })
 	repo := seedRepo(t)
@@ -112,11 +113,14 @@ func TestScanDropsTheRepeatedListing(t *testing.T) {
 	pretendGH(t)
 	same := []pullRequest{{Number: 5, URL: "u5", Head: "main"}}
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest { return same }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return same, nil }
 	t.Cleanup(func() { ghListRun = prev })
 
-	got := ghOpenPullRequests(context.Background(), t.TempDir(), "https://github.com/o/r")
+	got, err := ghOpenPullRequests(context.Background(), t.TempDir(), "https://github.com/o/r")
 
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
 	if len(got) != 1 {
 		t.Fatalf("listing returned %v, want the repeat dropped", got)
 	}
@@ -301,7 +305,7 @@ func TestScanOrdersCreatedThenCommitThenBranch(t *testing.T) {
 	byCommit := pullRequest{Number: 2, URL: "u/2", State: "OPEN", Head: "other"}
 	byBranch := pullRequest{Number: 3, URL: "u/3", State: "OPEN", Head: "main"}
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest { return []pullRequest{byBranch} }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return []pullRequest{byBranch}, nil }
 	prevView := viewPullRequest
 	viewPullRequest = func(context.Context, string, string) pullRequest { return recorded }
 	t.Cleanup(func() { ghListRun, viewPullRequest = prev, prevView })
@@ -331,7 +335,7 @@ func TestScanRanksAPrintedAddressBehindTheCommit(t *testing.T) {
 	mine := pullRequest{Number: 9, URL: "https://github.com/me/fork/pull/9", State: "OPEN", Head: "other"}
 	theirs := pullRequest{Number: 4, URL: "https://github.com/me/fork/pull/4", State: "OPEN", Head: "someone"}
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest { return []pullRequest{theirs} }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return []pullRequest{theirs}, nil }
 	prevView := viewPullRequest
 	viewPullRequest = func(context.Context, string, string) pullRequest { return theirs }
 	t.Cleanup(func() { ghListRun, viewPullRequest = prev, prevView })
@@ -409,7 +413,7 @@ func TestRecordedLinkBadgesWithoutTheHost(t *testing.T) {
 	drv := scanDriver(t)
 	pretendGH(t)
 	prev, prevView := ghListRun, viewPullRequest
-	ghListRun = func(context.Context, string, string) []pullRequest { return nil }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return nil, nil }
 	viewPullRequest = func(context.Context, string, string) pullRequest { return pullRequest{} }
 	prevCommit := commitPullRequests
 	commitPullRequests = func(context.Context, string, string, string) []pullRequest { return nil }
@@ -435,7 +439,7 @@ func TestRecordedLinkStillDropsWhenKnownMerged(t *testing.T) {
 	drv := scanDriver(t)
 	pretendGH(t)
 	prev, prevView := ghListRun, viewPullRequest
-	ghListRun = func(context.Context, string, string) []pullRequest { return nil }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return nil, nil }
 	viewPullRequest = func(_ context.Context, _, prURL string) pullRequest {
 		return pullRequest{Number: 42, URL: prURL, State: "MERGED"}
 	}
@@ -561,7 +565,10 @@ func insightsOf(bySession map[string][]pullRequest) map[string]sessionInsight {
 func pushTo(t *testing.T, repo string) string {
 	t.Helper()
 	remote := filepath.Join(t.TempDir(), "remote.git")
-	gitAt(t, repo, "init", "--bare", "--quiet", remote)
+	// -b main, so the bare repository's HEAD names the branch being pushed:
+	// a clone of one whose HEAD points at a branch nobody made lands on an
+	// unborn master, and the next push from it has no main to push.
+	gitAt(t, repo, "init", "--bare", "--quiet", "-b", "main", remote)
 	gitAt(t, repo, "remote", "add", "origin", remote)
 	gitAt(t, repo, "push", "--quiet", "--set-upstream", "origin", "main")
 	return remote
@@ -584,7 +591,7 @@ func TestScanCountsAheadAndBehind(t *testing.T) {
 	writeCommit(t, repo, "mine.txt", "mine")
 
 	prev := fetchRemote
-	fetchRemote = func(drv *git.Driver, root string) { drv.Fetch(root) }
+	fetchRemote = func(ctx context.Context, drv *git.Driver, root string) { drv.Fetch(ctx, root) }
 	t.Cleanup(func() { fetchRemote = prev })
 
 	found, _, _ := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
@@ -627,7 +634,7 @@ func TestScanFetchesARepositoryOnce(t *testing.T) {
 	pushTo(t, repo)
 	fetched := 0
 	prev := fetchRemote
-	fetchRemote = func(*git.Driver, string) { fetched++ }
+	fetchRemote = func(context.Context, *git.Driver, string) { fetched++ }
 	t.Cleanup(func() { fetchRemote = prev })
 
 	scanSessions(drv, noPane, []prScanTarget{
@@ -729,6 +736,158 @@ func TestPRChipColoursByChecks(t *testing.T) {
 	for _, pair := range [][2]string{{"green", "red"}, {"green", "amber"}, {"red", "amber"}, {"green", "unknown"}} {
 		if seen[pair[0]] == seen[pair[1]] {
 			t.Errorf("%s and %s render identically: %q", pair[0], pair[1], seen[pair[0]])
+		}
+	}
+}
+
+// GitHub computes mergeability on demand and reports UNKNOWN while it works.
+// A marker that flickers on every pass would be worse than none.
+func TestConflictingOnlyWhenGitHubIsSure(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		want  bool
+	}{
+		{"CONFLICTING", true},
+		{"MERGEABLE", false},
+		{"UNKNOWN", false},
+		{"", false},
+	} {
+		if got := (pullRequest{Mergeable: tc.state}).conflicting(); got != tc.want {
+			t.Errorf("mergeable=%q conflicting=%v, want %v", tc.state, got, tc.want)
+		}
+	}
+}
+
+func TestSizeReadsAsNothingWhenUnknown(t *testing.T) {
+	if got := (pullRequest{}).size(); got != "" {
+		t.Fatalf("size = %q, want nothing when the listing did not say", got)
+	}
+	if got := (pullRequest{Additions: 588, Deletions: 99}).size(); got != "+588 −99" {
+		t.Fatalf("size = %q", got)
+	}
+	// A pull request that only deletes still has a size worth showing.
+	if got := (pullRequest{Deletions: 12, ChangedFiles: 1}).size(); got != "+0 −12" {
+		t.Fatalf("size = %q", got)
+	}
+}
+
+// The mark and the tint answer different questions, so a pull request that is
+// both broken and unmergeable shows both.
+func TestPRChipMarksAConflictBesideTheCheckTint(t *testing.T) {
+	m := &Model{insights: map[string]sessionInsight{
+		"clean":    {prs: []pullRequest{{Number: 1, Mergeable: "MERGEABLE"}}},
+		"conflict": {prs: []pullRequest{{Number: 2, Mergeable: "CONFLICTING"}}},
+		"both": {prs: []pullRequest{{
+			Number: 3, Mergeable: "CONFLICTING",
+			Checks: []checkRun{{Status: "COMPLETED", Conclusion: "FAILURE"}},
+		}}},
+	}}
+	if chip := ansi.Strip(m.prChip(store.Session{ID: "clean"})); strings.Contains(chip, prConflictMark) {
+		t.Fatalf("a mergeable pull request wore the conflict mark: %q", chip)
+	}
+	for _, id := range []string{"conflict", "both"} {
+		if chip := ansi.Strip(m.prChip(store.Session{ID: id})); !strings.Contains(chip, prConflictMark) {
+			t.Fatalf("%s: chip = %q, want the conflict mark", id, chip)
+		}
+	}
+	// Both states at once must not collapse into one another's rendering.
+	if m.prChip(store.Session{ID: "conflict"}) == m.prChip(store.Session{ID: "both"}) {
+		t.Fatal("a failing conflicted pull request renders the same as a passing one")
+	}
+}
+
+// GitHub being unreachable is not evidence that these sessions have no pull
+// requests. A pass where every listing refused must report that it never got
+// an answer, or the badges are cleared until the host comes back.
+func TestUnreachableHostIsNotAnEmptyAnswer(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	prev := listPullRequests
+	listPullRequests = func(context.Context, string, string) ([]pullRequest, error) {
+		return nil, errors.New("dial tcp: connection refused")
+	}
+	t.Cleanup(func() { listPullRequests = prev })
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	_, _, reached := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	if reached {
+		t.Fatal("a pass whose every listing refused reported that it reached the host")
+	}
+}
+
+// A repository that really has no open pull requests is an answer, and has to
+// stay one, or a merged pull request would keep its badge forever.
+func TestAnEmptyRepositoryIsAnAnswer(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t)
+	repo := seedRepo(t)
+	remoteAt(t, repo, "git@github.com:me/fork.git")
+
+	_, _, reached := scanSessions(drv, noPane, []prScanTarget{{sessID: "s1", dir: repo}})
+
+	if !reached {
+		t.Fatal("an empty listing that succeeded was treated as a failure")
+	}
+}
+
+// A fork whose parent refuses is still a fork whose own pull requests were
+// read, so one listing answering is enough.
+func TestOneListingAnsweringIsEnough(t *testing.T) {
+	pretendGH(t)
+	prev := ghListRun
+	ghListRun = func(_ context.Context, _, repo string) ([]pullRequest, error) {
+		if repo == "" {
+			return nil, errors.New("HTTP 404")
+		}
+		return []pullRequest{{Number: 1, URL: "u1", Head: "main"}}, nil
+	}
+	t.Cleanup(func() { ghListRun = prev })
+
+	got, err := ghOpenPullRequests(context.Background(), t.TempDir(), "https://github.com/me/fork")
+
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %v, %v; want the fork's own pull request and no error", got, err)
+	}
+}
+
+// A recorded address nothing could be read back from leaves no number, and
+// "#0" would be a badge claiming a pull request that does not exist.
+func TestChipSaysNothingWithoutANumber(t *testing.T) {
+	m := &Model{insights: map[string]sessionInsight{
+		"broken": {prs: []pullRequest{{URL: "https://github.com/me/fork/pulls/nope"}}},
+	}}
+	if chip := m.prChip(store.Session{ID: "broken"}); chip != "" {
+		t.Fatalf("chip = %q, want nothing for an address with no number in it", chip)
+	}
+}
+
+// Everything a session can be that is not a repository with a remote: the
+// pass has to walk past each without failing the ones behind it.
+func TestScanWalksPastEverySessionItCannotRead(t *testing.T) {
+	drv := scanDriver(t)
+	pretendGH(t)
+	captureListing(t, pullRequest{Number: 9, URL: "u9", Head: "main", State: "OPEN"})
+	good := seedRepo(t)
+	remoteAt(t, good, "git@github.com:me/fork.git")
+	gone := filepath.Join(t.TempDir(), "deleted-under-us")
+
+	found, _, _ := scanSessions(drv, noPane, []prScanTarget{
+		{sessID: "loose", dir: t.TempDir()},       // not a repository
+		{sessID: "gone", dir: gone},               // directory no longer there
+		{sessID: "unpublished", dir: seedRepo(t)}, // repository with no remote
+		{sessID: "nowhere", dir: ""},              // no directory at all
+		{sessID: "good", dir: good},               // and one that works
+	})
+
+	if len(found["good"].prs) != 1 {
+		t.Fatalf("the readable session found %v; the unreadable ones took it down with them", found["good"].prs)
+	}
+	for _, id := range []string{"loose", "gone", "unpublished", "nowhere"} {
+		if in := found[id]; len(in.prs) != 0 {
+			t.Errorf("%s reported pull requests: %v", id, in.prs)
 		}
 	}
 }

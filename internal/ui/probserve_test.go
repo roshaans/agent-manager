@@ -83,7 +83,7 @@ func TestScanFindsAPullRequestOffTheSessionsBranch(t *testing.T) {
 		Head: "test/empty-pr", State: "OPEN",
 	}
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest { return []pullRequest{elsewhere} }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return []pullRequest{elsewhere}, nil }
 	t.Cleanup(func() { ghListRun = prev })
 	repo := seedRepo(t)
 	remoteAt(t, repo, "git@github.com:me/fork.git")
@@ -106,7 +106,7 @@ func TestScanKeepsARecordedLinkAfterItScrollsAway(t *testing.T) {
 	pretendGH(t)
 	recorded := "https://github.com/me/fork/pull/2"
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest { return nil }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return nil, nil }
 	prevView := viewPullRequest
 	viewPullRequest = func(_ context.Context, _, prURL string) pullRequest {
 		return pullRequest{Number: 2, URL: prURL, State: "OPEN", Head: "test/empty-pr"}
@@ -133,7 +133,7 @@ func TestScanDropsAMergedRecordedLink(t *testing.T) {
 	drv := scanDriver(t)
 	pretendGH(t)
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest { return nil }
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) { return nil, nil }
 	prevView := viewPullRequest
 	viewPullRequest = func(_ context.Context, _, prURL string) pullRequest {
 		return pullRequest{Number: 2, URL: prURL, State: "MERGED"}
@@ -161,8 +161,8 @@ func TestScanKeepsTheBranchPullRequestBesideThePrintedOne(t *testing.T) {
 	onBranch := pullRequest{Number: 1, URL: "https://github.com/me/fork/pull/1", Head: "main", State: "OPEN"}
 	elsewhere := pullRequest{Number: 2, URL: "https://github.com/me/fork/pull/2", Head: "test/empty-pr", State: "OPEN"}
 	prev := ghListRun
-	ghListRun = func(context.Context, string, string) []pullRequest {
-		return []pullRequest{elsewhere, onBranch}
+	ghListRun = func(context.Context, string, string) ([]pullRequest, error) {
+		return []pullRequest{elsewhere, onBranch}, nil
 	}
 	t.Cleanup(func() { ghListRun = prev })
 	repo := seedRepo(t)
